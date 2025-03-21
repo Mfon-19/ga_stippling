@@ -1,0 +1,45 @@
+// Each individual has dot count of 5000
+// Each dot has an x, y, and radius value
+class Individual {
+  dots: Dot[];
+  fitness: number = 0;
+  width: number;
+  height: number;
+  constructor(width: number, height: number) {
+    const dotCount = 10000;
+    this.width = width;
+    this.height = height;
+    this.dots = new Array(dotCount);
+
+    for (let i = 0; i < dotCount; i++) {
+      this.dots[i] = new Dot(this.randX(), this.randY(), this.randRadius());
+    }
+  }
+
+  mutate(mutationRate: number) {
+    // Generate new random values for some the x, y, and radius values
+    for (let i = 0; i < this.dots.length; i++) {
+      this.dots[i].x =
+        Math.random() < mutationRate ? this.randX() : this.dots[i].x;
+      this.dots[i].y =
+        Math.random() < mutationRate ? this.randY() : this.dots[i].y;
+      // Add radius mutation
+      this.dots[i].radius =
+        Math.random() < mutationRate
+          ? this.randRadius() // Random radius between 1-5
+          : this.dots[i].radius;
+    }
+  }
+
+  private randX() {
+    return Math.floor(Math.random() * this.width);
+  }
+
+  private randY() {
+    return Math.floor(Math.random() * this.height);
+  }
+
+  private randRadius() {
+    return 1 + Math.random() * 2;
+  }
+}
