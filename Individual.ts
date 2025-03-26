@@ -6,7 +6,7 @@ class Individual {
   width: number;
   height: number;
   constructor(width: number, height: number) {
-    const dotCount = 10000;
+    const dotCount = 50000;
     this.width = width;
     this.height = height;
     this.dots = new Array(dotCount);

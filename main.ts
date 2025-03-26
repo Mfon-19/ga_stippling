@@ -37,46 +37,36 @@ if (!imgCtx || !bwCtx || !ctx || !evolCtx)
 ctx.fillStyle = "black";
 
 const endAngle = 2 * Math.PI;
-
-// Check for OffscreenCanvas support
-const useOffscreenCanvas = typeof OffscreenCanvas !== "undefined";
+let generations = 0;
 
 const startEvolution = () => {
   if (!img) return;
-
-  // Log whether we're using OffscreenCanvas
-  console.log(
-    `Using ${
-      useOffscreenCanvas ? "OffscreenCanvas" : "regular canvas"
-    } for fitness calculations`
-  );
-
   const algo = new GeneticAlgorithm(
-    100, // Increased population size
+    100,
     0.01,
     bwCtx.getImageData(0, 0, img?.width, img?.height),
     ctx
   );
 
   const intervalId = setInterval(() => {
-    const startTime = performance.now();
     algo.evolve();
-    const endTime = performance.now();
-
-    // Performance logging
-    console.log(`Evolution step took ${(endTime - startTime).toFixed(2)}ms`);
-
+    generations++;
     const fittestIndex = algo.population.fittestIndividual();
     algo.population.drawIndividual(
       algo.population.population[fittestIndex].dots,
       evolCtx
     );
+    console.log("Generations: ", generations)
     console.log(
       "Fittest individual fitness: ",
       algo.population.population[fittestIndex].fitness
     );
-    console.log(`Fitness scores: ${algo.population.population.map(ind => ind.fitness).join(', ')}`);
-  }, 10); // Don't run too frequently to avoid overloading
+    console.log(
+      `Fitness scores: ${algo.population.population
+        .map((ind) => ind.fitness)
+        .join(", ")}`
+    );
+  }, 1000 / 60);
 };
 
 const prepareTarget = () => {
