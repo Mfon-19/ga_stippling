@@ -1,7 +1,7 @@
 "use strict";
 // A population of Individuals. Population size is provided in the constructor
 class Population {
-    constructor(size, target, ctx) {
+    constructor(size, target, ctx, dotCount = 50000) {
         this.size = size;
         this.target = target;
         this.population = Array(size);
@@ -14,7 +14,7 @@ class Population {
             this.targetData[i] = target.data[i * 4];
         }
         for (let i = 0; i < size; i++) {
-            this.population[i] = new Individual(target.width, target.height);
+            this.population[i] = new Individual(target.width, target.height, dotCount);
         }
     }
     calculateFitness() {
@@ -52,7 +52,7 @@ class Population {
                 y--;
             }
             x++;
-            // Draw horizontal lines at each level (for all octants)
+            // Draw horizontal lines at each level
             this.drawHorizontalLine(centerY + y, centerX - x, centerX + x, grid);
             this.drawHorizontalLine(centerY - y, centerX - x, centerX + x, grid);
             this.drawHorizontalLine(centerY + x, centerX - y, centerX + y, grid);

@@ -8,11 +8,12 @@ class GeneticAlgorithm {
     popSize: number,
     mutationRate: number,
     target: ImageData,
-    ctx: CanvasRenderingContext2D
+    ctx: CanvasRenderingContext2D,
+    dotCount: number = 50000
   ) {
     this.popSize = popSize;
     this.mutationRate = mutationRate;
-    this.population = new Population(popSize, target, ctx);
+    this.population = new Population(popSize, target, ctx, dotCount);
   }
 
   evolve() {
@@ -21,14 +22,13 @@ class GeneticAlgorithm {
     this.newGeneration();
   }
 
-  // RANDOM CROSSOVER WAS DUMBBBB!!!!!!!!!!!!!!
+  // Crossover not random
   crossover(a: Individual, b: Individual) {
-    // Cross over x, y, and radius values of two individuals
-    let child = new Individual(a.width, a.height);
+    let child = new Individual(a.width, a.height, a.dots.length);
 
     const target = this.population.target;
 
-    for (let i = 0; i < 10000; i++) {
+    for (let i = 0; i < a.dots.length; i++) {
       // Calculate which parent's dot better represents the target at this position
       const fitnessA = this.calculateDotFitness(a.dots[i], target);
       const fitnessB = this.calculateDotFitness(b.dots[i], target);
@@ -45,39 +45,34 @@ class GeneticAlgorithm {
 
   // Helper method to calculate how well a dot matches the target
   calculateDotFitness(dot: Dot, target: ImageData): number {
-    // For a black and white image, we would check:
+    // What we check:
     // 1. Is the dot positioned on a black pixel in the target?
     // 2. How well does the dot's size cover the black area?
 
     const x = Math.floor(dot.x);
     const y = Math.floor(dot.y);
 
-    // Check if position is valid
     if (x < 0 || x >= target.width || y < 0 || y >= target.height) {
-      return 0; // Out of bounds
+      return 0; 
     }
 
-    // Get pixel value (for grayscale, we only need one channel)
+    // Get pixel value 
     const pixelIndex = (y * target.width + x) * 4;
-    const pixelValue = target.data[pixelIndex]; // 0 (black) to 255 (white)
+    const pixelValue = target.data[pixelIndex]; 
 
     // If pixel is black (or close to black), dot is well-positioned
     const positionScore = 255 - pixelValue; // Higher for darker pixels
-
-    // Additional scoring based on how well the dot's radius matches the black region
-    // This would require more complex analysis of surrounding pixels
 
     return positionScore;
   }
 
   parentSelect(): { parent1: Individual; parent2: Individual } {
-    // Calculate total fitness for better selection probability
     const totalFitness = this.population.population.reduce(
       (sum, ind) => sum + ind.fitness,
       0
     );
 
-    // Use fitness proportionate selection (roulette wheel)
+    // Roulette selection
     const selectParent = () => {
       const threshold = Math.random() * totalFitness;
       let sum = 0;
@@ -89,7 +84,7 @@ class GeneticAlgorithm {
         }
       }
 
-      // Fallback to last individual (should rarely happen)
+      // Fallback to last individual
       return this.population.population[this.population.population.length - 1];
     };
 
@@ -100,15 +95,15 @@ class GeneticAlgorithm {
   }
 
   newGeneration() {
-    const elitismCount = Math.floor(this.popSize * 0.1); // Keep top 10%
+    const elitismCount = Math.floor(this.popSize * 0.7);
     let newPopulation = [];
 
-    // Sort population by fitness (descending)
+    // Sort population by fitness 
     const sortedPop = [...this.population.population].sort(
       (a, b) => b.fitness - a.fitness
     );
 
-    // Keep the best individuals (elitism)
+    // Keep the best individuals 
     for (let i = 0; i < elitismCount; i++) {
       newPopulation.push(sortedPop[i]);
     }

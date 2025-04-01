@@ -8,7 +8,12 @@ class Population {
   width: number;
   height: number;
   ctx: CanvasRenderingContext2D;
-  constructor(size: number, target: ImageData, ctx: CanvasRenderingContext2D) {
+  constructor(
+    size: number,
+    target: ImageData,
+    ctx: CanvasRenderingContext2D,
+    dotCount: number = 50000
+  ) {
     this.size = size;
     this.target = target;
     this.population = Array(size);
@@ -24,7 +29,11 @@ class Population {
     }
 
     for (let i = 0; i < size; i++) {
-      this.population[i] = new Individual(target.width, target.height);
+      this.population[i] = new Individual(
+        target.width,
+        target.height,
+        dotCount
+      );
     }
   }
 
@@ -72,7 +81,7 @@ class Population {
       }
       x++;
 
-      // Draw horizontal lines at each level (for all octants)
+      // Draw horizontal lines at each level
       this.drawHorizontalLine(centerY + y, centerX - x, centerX + x, grid);
       this.drawHorizontalLine(centerY - y, centerX - x, centerX + x, grid);
       this.drawHorizontalLine(centerY + x, centerX - y, centerX + y, grid);
