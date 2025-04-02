@@ -1,5 +1,3 @@
-// The main Genetic Algorithm
-
 class GeneticAlgorithm {
   popSize: number;
   mutationRate: number;
@@ -22,7 +20,7 @@ class GeneticAlgorithm {
     this.newGeneration();
   }
 
-  // Crossover not random
+  // NOTE: Crossover not random
   crossover(a: Individual, b: Individual) {
     let child = new Individual(a.width, a.height, a.dots.length);
 

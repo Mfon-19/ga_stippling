@@ -1,4 +1,3 @@
-// Each dot has an x, y, and radius value
 class Individual {
   dots: Dot[];
   fitness: number = 0;
@@ -22,22 +21,22 @@ class Individual {
       this.dots[i].y =
         Math.random() < mutationRate ? this.randY() : this.dots[i].y;
       this.dots[i].radius =
-        Math.random() < mutationRate
-          ? this.randRadius() 
-          : this.dots[i].radius;
+        Math.random() < mutationRate ? this.randRadius() : this.dots[i].radius;
     }
   }
 
+  // Random x value
   private randX() {
     return Math.floor(Math.random() * this.width);
   }
 
+  // Random y value
   private randY() {
     return Math.floor(Math.random() * this.height);
   }
 
+  // Random radius value
   private randRadius() {
-    // return 1 + Math.random() * 2;
-    return 1;
+    return 1 + Math.random() * 2;
   }
 }

@@ -1,5 +1,3 @@
-// A population of Individuals. Population size is provided in the constructor
-
 class Population {
   size: number;
   population: Individual[];
@@ -38,13 +36,16 @@ class Population {
   }
 
   calculateFitness() {
+    // Calculate fitness of all individuals in the population
     for (let individual of this.population) {
       const grid = new Uint8Array(this.width * this.height).fill(255);
 
+      // First represent Individuals as dots on a grid
       for (const dot of individual.dots) {
         this.drawDotToGrid(dot, grid);
       }
 
+      // Now calculate the fitness of the Individual
       individual.fitness = this.calculateGridFitness(grid);
     }
   }
@@ -108,10 +109,13 @@ class Population {
     }
   }
 
+
+  // Calculates the fitness of dots on a grid
   calculateGridFitness(grid: Uint8Array): number {
     const totalPixels = this.width * this.height;
     let diff = 0;
 
+    // Simply calculates the difference between the grid and target
     for (let i = 0; i < totalPixels; i++) {
       const pixelDiff = grid[i] - this.targetData[i];
       diff += pixelDiff * pixelDiff;
@@ -123,6 +127,7 @@ class Population {
     return Math.pow(rawFitness, 0.5);
   }
 
+  // Draw an individual on the canvas. Useful for rendering to the browser
   drawIndividual(dots: Dot[], ctx: CanvasRenderingContext2D) {
     if (!ctx) return null;
 
@@ -143,6 +148,7 @@ class Population {
     return ctx;
   }
 
+  // Get the index of the fittest Individual in the Population
   fittestIndividual() {
     let fittest = 0;
 

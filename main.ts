@@ -1,8 +1,3 @@
-// dots on a white canvas
-// dots are randomly displaced
-// how many dots? variable
-// dot size? variable
-
 // Canvas for our genetic algo
 const canvas: HTMLCanvasElement = document.getElementById(
   "canvas"
@@ -18,7 +13,7 @@ const bwCanvas: HTMLCanvasElement = document.getElementById(
   "bwCanvas"
 ) as HTMLCanvasElement;
 
-// Canvas for the target image in black and white
+// Canvas for the evolution of the target image
 const evolCanvas: HTMLCanvasElement = document.getElementById(
   "evolCanvas"
 ) as HTMLCanvasElement;
@@ -29,10 +24,12 @@ const ctx = canvas.getContext("2d", { willReadFrequently: true });
 const imgCtx = imgCanvas.getContext("2d");
 // Context for our target image in black and white
 const bwCtx = bwCanvas.getContext("2d");
-// Context for our target image in black and white
+// Context for the evolution of the target image
 const evolCtx = evolCanvas.getContext("2d");
 
 const dotCountElement = document.getElementById("recommendedDotCount");
+const dotCountInput = document.getElementById("dotCountInput") as HTMLInputElement;
+
 if (!imgCtx || !bwCtx || !ctx || !evolCtx)
   throw new Error("Failed to get canvas contexts");
 
@@ -58,6 +55,7 @@ const thresholdValueDisplay = document.getElementById(
 ) as HTMLSpanElement;
 
 if (blurSlider && thresholdSlider) {
+  // Recalculate dot count and update black and white image when blur and threshold change
   blurSlider.addEventListener("input", (e) => {
     blurAmount = parseInt((e.target as HTMLInputElement).value);
     blurValueDisplay.textContent = blurAmount.toString();
@@ -80,8 +78,8 @@ if (blurSlider && thresholdSlider) {
 const startEvolution = () => {
   if (!img) return;
   const algo = new GeneticAlgorithm(
-    300,
-    0.3,
+    100,
+    0.2,
     bwCtx.getImageData(0, 0, img?.width, img?.height),
     ctx,
     recommendedDotCount
@@ -100,18 +98,11 @@ const startEvolution = () => {
       algo.population.population[fittestIndex].dots,
       evolCtx
     );
-    console.log("Generations: ", generations);
-    console.log(
-      "Fittest individual fitness: ",
-      algo.population.population[fittestIndex].fitness
-    );
-    console.log(
-      `Fitness scores: ${algo.population.population
-        .map((ind) => ind.fitness)
-        .join(", ")}`
-    );
   }, 1000 / 60);
 };
+
+// Can also change the dotcount manually
+dotCountInput.addEventListener("change", () => recommendedDotCount = Number(dotCountInput.value))
 
 const prepareTarget = () => {
   const input = document.getElementById("imgInput") as HTMLInputElement;
@@ -147,12 +138,12 @@ const prepareTarget = () => {
   reader.readAsDataURL(file);
 };
 
-// Add event listener to the file input
 const fileInput = document.getElementById("imgInput") as HTMLInputElement;
 if (fileInput) {
   fileInput.addEventListener("change", prepareTarget);
 }
 
+// Start the evolution
 const startBtn = document.getElementById("start");
 if (startBtn) {
   startBtn.addEventListener("click", startEvolution);
@@ -184,7 +175,6 @@ const convertToBlackAndWhite = () => {
     data[i] = gray; // Red
     data[i + 1] = gray; // Green
     data[i + 2] = gray; // Blue
-    // Alpha channel (data[i + 3]) remains unchanged
   }
 
   const width = imgCanvas.width;
@@ -219,7 +209,7 @@ const convertToBlackAndWhite = () => {
       tempData[i] = r / count;
       tempData[i + 1] = g / count;
       tempData[i + 2] = b / count;
-      tempData[i + 3] = data[i + 3]; // Keep original alpha
+      tempData[i + 3] = data[i + 3]; 
     }
   }
 
@@ -261,8 +251,9 @@ const calculateRecommendedDotCount = () => {
   recommendedDotCount = Math.ceil(blackPercentage * 200000);
 
   if (dotCountElement) {
-    dotCountElement.textContent = `Recommended dot count: ${recommendedDotCount}`;
     dotCountElement.style.display = "block";
+    dotCountInput.style.display = "inline-block";
+    dotCountInput.value = recommendedDotCount+"";
   }
 
   return recommendedDotCount;
