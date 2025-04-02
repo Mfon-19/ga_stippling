@@ -32,7 +32,7 @@ The result is a stylized version of the image composed entirely of dots (stipple
 1. Clone the repository:
 
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Mfon-19/ga_stippling.git
    cd ga_stippling
    ```
 
@@ -108,7 +108,7 @@ The stippling algorithm uses a genetic approach:
 2. **Fitness Evaluation**: Each dot arrangement is compared to the target image
 3. **Selection**: Better-performing arrangements are selected for reproduction
 4. **Crossover**: New arrangements are created by combining features from parents
-5. **Mutation**: Random changes are introduced to prevent premature convergence
+5. **Mutation**: Random changes are introduced to an Individual
 6. **Replacement**: The population is updated with new candidate solutions
 7. **Iteration**: The process repeats until stopped by the user
 
