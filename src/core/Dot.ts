@@ -1,6 +1,4 @@
-import { Point } from "../types";
-
-export class Dot implements Point {
+export class Dot {
   constructor(public x: number, public y: number, public radius: number) {}
 
   /**

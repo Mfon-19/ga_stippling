@@ -33,6 +33,7 @@ export class GeneticAlgorithm {
    */
   public evolve(): void {
     this.population.calculateFitness();
+    console.log("Fittest Individual's fitness score: ", this.population.population[this.population.getFittestIndex()].fitness);
     this.createNewGeneration();
   }
 

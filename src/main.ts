@@ -158,7 +158,6 @@ document.addEventListener("DOMContentLoaded", () => {
   new App();
 });
 
-// Prevent accidental navigation
 window.addEventListener("beforeunload", (event) => {
   if (document.querySelector(".evolution-running")) {
     event.preventDefault();
