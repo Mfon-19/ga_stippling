@@ -48,6 +48,15 @@ typedef struct StipplingOptimizerProgress {
   uint64_t best_squared_error;
 } StipplingOptimizerProgress;
 
+typedef struct StipplingOptimizerValidation {
+  int valid;
+  uint32_t checked_candidates;
+  uint32_t mismatched_candidates;
+  uint32_t first_mismatch_index;
+  uint64_t max_squared_error_delta;
+  uint32_t total_pixel_mismatches;
+} StipplingOptimizerValidation;
+
 typedef struct StipplingImageBufferView {
   int width;
   int height;
@@ -94,6 +103,18 @@ size_t stippling_engine_best_dot_count(const StipplingEngine* engine);
 size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
                                        StipplingDot* output,
                                        size_t capacity);
+size_t stippling_engine_best_svg_byte_length(const StipplingEngine* engine,
+                                             int scale);
+size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
+                                      char* output,
+                                      size_t capacity,
+                                      int scale);
+size_t stippling_engine_best_png_byte_length(const StipplingEngine* engine,
+                                             int scale);
+size_t stippling_engine_copy_best_png(const StipplingEngine* engine,
+                                      uint8_t* output,
+                                      size_t capacity,
+                                      int scale);
 
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine);
 uint32_t stippling_engine_target_black_pixels(const StipplingEngine* engine);
@@ -105,6 +126,8 @@ StipplingOptimizerProgress stippling_engine_optimizer_progress(
 uint32_t stippling_engine_optimizer_generation(const StipplingEngine* engine);
 double stippling_engine_optimizer_best_fitness(const StipplingEngine* engine);
 uint64_t stippling_engine_optimizer_best_squared_error(const StipplingEngine* engine);
+StipplingOptimizerValidation stippling_engine_validate_optimizer(
+    const StipplingEngine* engine);
 const char* stippling_engine_last_error(const StipplingEngine* engine);
 
 #ifdef __cplusplus

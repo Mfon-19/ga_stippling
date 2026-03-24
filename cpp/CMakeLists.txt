@@ -10,6 +10,7 @@ set(
   STIPPLING_ENGINE_SOURCES
   engine/src/c_api.cpp
   engine/src/engine.cpp
+  engine/src/export.cpp
   engine/src/optimizer.cpp
   engine/src/raster_grid.cpp
 )
@@ -68,7 +69,11 @@ target_link_libraries(stippling_c_api_test PRIVATE stippling_engine)
 add_executable(stippling_optimizer_test tests/optimizer_test.cpp)
 target_link_libraries(stippling_optimizer_test PRIVATE stippling_engine)
 
+add_executable(stippling_export_validation_test tests/export_validation_test.cpp)
+target_link_libraries(stippling_export_validation_test PRIVATE stippling_engine)
+
 add_test(NAME stippling_smoke_test COMMAND stippling_smoke_test)
 add_test(NAME stippling_raster_grid_test COMMAND stippling_raster_grid_test)
 add_test(NAME stippling_c_api_test COMMAND stippling_c_api_test)
 add_test(NAME stippling_optimizer_test COMMAND stippling_optimizer_test)
+add_test(NAME stippling_export_validation_test COMMAND stippling_export_validation_test)

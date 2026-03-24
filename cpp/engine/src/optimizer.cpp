@@ -367,4 +367,63 @@ void Optimizer::mutate(Candidate& candidate) {
   }
 }
 
+OptimizerValidation Optimizer::validate_incremental_state() const {
+  ensure_initialized();
+
+  OptimizerValidation validation{};
+  validation.checked_candidates =
+      static_cast<std::uint32_t>(population_.size());
+  validation.first_mismatch_index = validation.checked_candidates;
+
+  // This validation path intentionally redraws from scratch so tests and CLI
+  // commands can prove that the incremental bookkeeping has not drifted away
+  // from the reference raster.
+  for (std::size_t candidate_index = 0; candidate_index < population_.size();
+       ++candidate_index) {
+    const auto& candidate = population_[candidate_index];
+    RasterGrid full(width_, height_);
+
+    for (const auto& dot : candidate.dots) {
+      full.draw_dot(dot);
+    }
+
+    const auto recomputed_error = full.squared_error(target_);
+    const auto pixel_match = full.pixels() == candidate.grid.pixels();
+    const auto error_match = recomputed_error == candidate.squared_error;
+
+    if (pixel_match && error_match) {
+      continue;
+    }
+
+    validation.valid = false;
+    ++validation.mismatched_candidates;
+    if (validation.first_mismatch_index == validation.checked_candidates) {
+      validation.first_mismatch_index =
+          static_cast<std::uint32_t>(candidate_index);
+    }
+
+    const auto error_delta =
+        recomputed_error > candidate.squared_error
+            ? recomputed_error - candidate.squared_error
+            : candidate.squared_error - recomputed_error;
+    validation.max_squared_error_delta =
+        std::max(validation.max_squared_error_delta, error_delta);
+
+    const auto& expected_pixels = full.pixels();
+    const auto& actual_pixels = candidate.grid.pixels();
+    for (std::size_t pixel_index = 0; pixel_index < expected_pixels.size();
+         ++pixel_index) {
+      if (expected_pixels[pixel_index] != actual_pixels[pixel_index]) {
+        ++validation.total_pixel_mismatches;
+      }
+    }
+  }
+
+  if (validation.valid) {
+    validation.first_mismatch_index = 0;
+  }
+
+  return validation;
+}
+
 }  // namespace stippling

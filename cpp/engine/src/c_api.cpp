@@ -80,6 +80,18 @@ StipplingOptimizerProgress to_c_progress(
   };
 }
 
+StipplingOptimizerValidation to_c_validation(
+    const stippling::OptimizerValidation& validation) {
+  return {
+      .valid = validation.valid ? 1 : 0,
+      .checked_candidates = validation.checked_candidates,
+      .mismatched_candidates = validation.mismatched_candidates,
+      .first_mismatch_index = validation.first_mismatch_index,
+      .max_squared_error_delta = validation.max_squared_error_delta,
+      .total_pixel_mismatches = validation.total_pixel_mismatches,
+  };
+}
+
 StipplingDot to_c_dot(const stippling::Dot& dot) {
   return {
       .x = dot.x,
@@ -268,6 +280,52 @@ size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
   return count;
 }
 
+size_t stippling_engine_best_svg_byte_length(const StipplingEngine* engine,
+                                             int scale) {
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  return engine->engine.export_best_svg(scale).size();
+}
+
+size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
+                                      char* output,
+                                      size_t capacity,
+                                      int scale) {
+  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  const auto svg = engine->engine.export_best_svg(scale);
+  const auto count = std::min<std::size_t>(capacity, svg.size());
+  std::copy_n(svg.data(), count, output);
+  return count;
+}
+
+size_t stippling_engine_best_png_byte_length(const StipplingEngine* engine,
+                                             int scale) {
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  return engine->engine.export_best_png(scale).size();
+}
+
+size_t stippling_engine_copy_best_png(const StipplingEngine* engine,
+                                      uint8_t* output,
+                                      size_t capacity,
+                                      int scale) {
+  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  const auto png = engine->engine.export_best_png(scale);
+  const auto count = std::min<std::size_t>(capacity, png.size());
+  std::copy_n(png.data(), count, output);
+  return count;
+}
+
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine) {
   if (engine == nullptr) {
     return {};
@@ -314,6 +372,15 @@ uint64_t stippling_engine_optimizer_best_squared_error(
     const StipplingEngine* engine) {
   return engine == nullptr ? 0u
                            : engine->engine.optimizer_progress().best_squared_error;
+}
+
+StipplingOptimizerValidation stippling_engine_validate_optimizer(
+    const StipplingEngine* engine) {
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return {};
+  }
+
+  return to_c_validation(engine->engine.validate_optimizer());
 }
 
 const char* stippling_engine_last_error(const StipplingEngine* engine) {

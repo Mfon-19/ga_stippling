@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "stippling/engine/dot.hpp"
+#include "stippling/engine/export.hpp"
 
 namespace stippling {
 
@@ -15,6 +16,15 @@ struct OptimizerProgress {
   std::uint32_t generation{0};
   double best_fitness{0.0};
   std::uint64_t best_squared_error{0};
+};
+
+struct OptimizerValidation {
+  bool valid{true};
+  std::uint32_t checked_candidates{0};
+  std::uint32_t mismatched_candidates{0};
+  std::uint32_t first_mismatch_index{0};
+  std::uint64_t max_squared_error_delta{0};
+  std::uint32_t total_pixel_mismatches{0};
 };
 
 enum class PixelFormat {
@@ -95,6 +105,12 @@ class Engine {
   [[nodiscard]] OptimizerProgress evolve_batch();
   [[nodiscard]] const std::vector<Dot>& best_dots() const;
   [[nodiscard]] OptimizerProgress optimizer_progress() const;
+  [[nodiscard]] OptimizerValidation validate_optimizer() const;
+  [[nodiscard]] std::string export_best_svg(int scale = 1) const;
+  [[nodiscard]] std::vector<std::uint8_t> export_best_png(int scale = 1) const;
+  [[nodiscard]] std::vector<std::uint8_t> render_best_grayscale(
+      int scale = 1) const;
+  [[nodiscard]] QualityMetrics best_quality_metrics() const;
 
   [[nodiscard]] std::string status_string() const;
 

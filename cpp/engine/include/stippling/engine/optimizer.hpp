@@ -30,6 +30,7 @@ class Optimizer {
   [[nodiscard]] bool initialized() const noexcept;
   [[nodiscard]] const std::vector<Dot>& best_dots() const;
   [[nodiscard]] OptimizerProgress progress() const noexcept;
+  [[nodiscard]] OptimizerValidation validate_incremental_state() const;
 
  private:
   struct Candidate {

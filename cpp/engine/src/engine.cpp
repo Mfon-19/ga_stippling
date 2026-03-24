@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "stippling/engine/export.hpp"
 #include "stippling/engine/optimizer.hpp"
 
 namespace stippling {
@@ -146,6 +147,9 @@ std::vector<std::uint8_t> extract_target_channel(const ImageBuffer& image) {
 
 Engine::Engine() {
   capabilities_.incremental_fitness = true;
+  capabilities_.benchmark_mode = true;
+  capabilities_.export_svg = true;
+  capabilities_.export_png = true;
   status_ = EngineStatus::idle;
 }
 
@@ -200,12 +204,24 @@ ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
   if (!source_image.valid()) {
     throw std::invalid_argument("Source image buffer is invalid");
   }
-  if (source_image.format != PixelFormat::rgba8) {
-    throw std::invalid_argument(
-        "prepare_target expects a tightly packed rgba8 source image");
+  if (source_image.format != PixelFormat::rgba8 &&
+      source_image.format != PixelFormat::grayscale8) {
+    throw std::invalid_argument("prepare_target expects grayscale8 or rgba8 input");
   }
 
   ImageBuffer processed = source_image;
+  if (processed.format == PixelFormat::grayscale8) {
+    std::vector<std::uint8_t> rgba_pixels(
+        static_cast<std::size_t>(processed.width * processed.height * 4), 255);
+    for (std::size_t index = 0; index < processed.pixels.size(); ++index) {
+      rgba_pixels[index * 4] = processed.pixels[index];
+      rgba_pixels[index * 4 + 1] = processed.pixels[index];
+      rgba_pixels[index * 4 + 2] = processed.pixels[index];
+    }
+    processed.format = PixelFormat::rgba8;
+    processed.pixels = std::move(rgba_pixels);
+  }
+
   convert_to_grayscale(processed);
 
   if (config.blur_amount > 0) {
@@ -253,6 +269,49 @@ OptimizerProgress Engine::optimizer_progress() const {
   }
 
   return optimizer_->progress();
+}
+
+OptimizerValidation Engine::validate_optimizer() const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return optimizer_->validate_incremental_state();
+}
+
+std::string Engine::export_best_svg(int scale) const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return export_dots_to_svg(best_dots(), image_.width, image_.height, scale);
+}
+
+std::vector<std::uint8_t> Engine::export_best_png(int scale) const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return export_dots_to_png(best_dots(), image_.width, image_.height, scale);
+}
+
+std::vector<std::uint8_t> Engine::render_best_grayscale(int scale) const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return render_dots_to_grayscale(best_dots(), image_.width, image_.height, scale);
+}
+
+QualityMetrics Engine::best_quality_metrics() const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+  if (image_.format != PixelFormat::rgba8) {
+    throw std::logic_error("Quality metrics require an rgba8 prepared target");
+  }
+
+  return compute_quality_metrics(extract_target_channel(image_), render_best_grayscale());
 }
 
 std::string Engine::status_string() const {
