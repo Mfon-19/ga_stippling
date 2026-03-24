@@ -1,10 +1,12 @@
 import { CanvasManager } from "./ui/CanvasManager";
 import { EventHandlers, UIElements } from "./ui/EventHandlers";
 import { CONFIG } from "./utils/config";
+import { WasmEngineClient } from "./wasm/WasmEngineClient";
 
 class App {
   private canvasManager!: CanvasManager;
   private eventHandlers!: EventHandlers;
+  private engineClient: WasmEngineClient | null = null;
 
   constructor() {
     this.initializeApp();
@@ -29,6 +31,10 @@ class App {
 
       // Add window cleanup
       this.setupWindowListeners();
+
+      // Bootstrap the worker boundary now so the future WASM engine can be
+      // integrated without rewriting application startup.
+      void this.initializeEngineClient();
     } catch (error) {
       this.handleInitializationError(error);
     }
@@ -137,6 +143,28 @@ class App {
   }
 
   /**
+   * Initialize the worker client. The worker currently loads a stub backend
+   * until the native C++/WASM engine is ready.
+   */
+  private async initializeEngineClient(): Promise<void> {
+    this.engineClient = new WasmEngineClient();
+
+    try {
+      const readyEvent = await this.engineClient.initialize();
+      console.info(
+        `Engine worker ready with backend: ${readyEvent.capabilities.backend}`
+      );
+    } catch (error) {
+      console.warn(
+        "Engine worker bootstrap failed. Continuing with the main-thread engine.",
+        error
+      );
+      this.engineClient.terminate();
+      this.engineClient = null;
+    }
+  }
+
+  /**
    * Show error message to user
    */
   private showErrorMessage(message: string): void {
@@ -149,6 +177,10 @@ class App {
   private cleanup(): void {
     if (this.eventHandlers) {
       this.eventHandlers.dispose();
+    }
+    if (this.engineClient) {
+      this.engineClient.terminate();
+      this.engineClient = null;
     }
   }
 }
