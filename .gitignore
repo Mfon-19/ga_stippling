@@ -2,16 +2,12 @@ node_modules/
 .tmp/
 
 images/
-benchmarks/
 benchmarks/results/
-docs/
-fixtures/
 cpp/build/
 cpp/build-wasm/
-scripts/*
-!scripts/benchmark-headless.ts
-!scripts/run-benchmark.sh
 src/wasm/generated/stipplingEngine.js
 
 jobs.jpeg
 landscape.avif
+.vercel
+.env*.local
