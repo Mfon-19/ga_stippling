@@ -12,7 +12,7 @@ export type EngineStatus =
   | "paused"
   | "error";
 
-export type EngineBackend = "stub" | "wasm";
+export type EngineBackend = "typescript" | "wasm";
 
 export interface EngineCapabilities {
   backend: EngineBackend;
@@ -26,6 +26,7 @@ export interface EngineCapabilities {
 export interface SerializedImageBuffer {
   width: number;
   height: number;
+  format: "rgba8";
   pixels: ArrayBuffer;
 }
 

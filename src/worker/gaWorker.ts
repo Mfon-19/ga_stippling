@@ -6,16 +6,14 @@ import {
   EngineSnapshotEvent,
   EngineStatus,
   EngineStatusEvent,
-  SerializedImageBuffer,
 } from "../shared/engineProtocol";
+import { TypescriptEngineBackend } from "./TypescriptEngineBackend";
 import { WasmEngineModule, loadEngineModule } from "../wasm/engineModule";
 
 interface WorkerState {
   status: EngineStatus;
   module: WasmEngineModule | null;
-  image: SerializedImageBuffer | null;
-  activeRunId: string | null;
-  generation: number;
+  backend: TypescriptEngineBackend | null;
 }
 
 const workerScope = self as DedicatedWorkerGlobalScope;
@@ -23,9 +21,7 @@ const workerScope = self as DedicatedWorkerGlobalScope;
 const state: WorkerState = {
   status: "booting",
   module: null,
-  image: null,
-  activeRunId: null,
-  generation: 0,
+  backend: null,
 };
 
 workerScope.addEventListener("message", (event: MessageEvent<EngineCommand>) => {
@@ -40,9 +36,7 @@ async function handleCommand(command: EngineCommand): Promise<void> {
         return;
       case "load-image":
         ensureInitialized();
-        state.image = command.image;
-        state.activeRunId = null;
-        state.generation = 0;
+        state.backend?.loadImage(command.image);
         state.status = "loaded";
         postEvent({
           type: "ack",
@@ -52,24 +46,25 @@ async function handleCommand(command: EngineCommand): Promise<void> {
         return;
       case "start-run":
         ensureImageLoaded();
-        state.activeRunId = command.runId;
-        state.generation = 0;
+        state.backend?.startRun(command.runId, command.config, {
+          onProgress: (event) => {
+            state.status = "running";
+            postEvent(event);
+          },
+          onSnapshot: (event) => {
+            postEvent(event);
+          },
+        });
         state.status = "running";
         postEvent({
           type: "ack",
           requestId: command.requestId,
           status: state.status,
         });
-        postEvent({
-          type: "progress",
-          runId: command.runId,
-          generation: state.generation,
-          bestFitness: 0,
-          status: state.status,
-        });
         return;
       case "pause-run":
         ensureActiveRun(command.runId);
+        state.backend?.pause();
         state.status = "paused";
         postEvent({
           type: "ack",
@@ -79,9 +74,8 @@ async function handleCommand(command: EngineCommand): Promise<void> {
         return;
       case "stop-run":
         ensureActiveRun(command.runId);
-        state.activeRunId = null;
-        state.generation = 0;
-        state.status = state.image ? "loaded" : "idle";
+        state.backend?.stop();
+        state.status = state.backend?.hasImage() ? "loaded" : "idle";
         postEvent({
           type: "ack",
           requestId: command.requestId,
@@ -112,6 +106,7 @@ async function handleCommand(command: EngineCommand): Promise<void> {
 async function handleInitialize(requestId: string): Promise<void> {
   if (!state.module) {
     state.module = await loadEngineModule();
+    state.backend = new TypescriptEngineBackend();
   }
 
   state.status = "idle";
@@ -128,8 +123,8 @@ function createStatusEvent(requestId: string): EngineStatusEvent {
     type: "status",
     requestId,
     status: state.status,
-    hasImage: state.image !== null,
-    activeRunId: state.activeRunId,
+    hasImage: state.backend?.hasImage() ?? false,
+    activeRunId: state.backend?.activeRunId() ?? null,
   };
 }
 
@@ -137,32 +132,29 @@ function createSnapshotEvent(
   requestId: string,
   runId: string
 ): EngineSnapshotEvent {
-  return {
-    type: "snapshot",
-    requestId,
-    runId,
-    snapshot: {
-      generation: state.generation,
-    },
-  };
+  if (!state.backend) {
+    throw new Error("Engine worker is not initialized");
+  }
+
+  return state.backend.createSnapshotEvent(requestId, runId);
 }
 
 function ensureInitialized(): void {
-  if (!state.module) {
+  if (!state.module || !state.backend) {
     throw new Error("Engine worker is not initialized");
   }
 }
 
 function ensureImageLoaded(): void {
   ensureInitialized();
-  if (!state.image) {
+  if (!state.backend?.hasImage()) {
     throw new Error("No image has been loaded into the engine worker");
   }
 }
 
 function ensureActiveRun(runId: string): void {
   ensureImageLoaded();
-  if (state.activeRunId !== runId) {
+  if (state.backend?.activeRunId() !== runId) {
     throw new Error(`Run ${runId} is not active`);
   }
 }

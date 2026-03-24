@@ -151,6 +151,7 @@ class App {
 
     try {
       const readyEvent = await this.engineClient.initialize();
+      this.eventHandlers.setEngineClient(this.engineClient);
       console.info(
         `Engine worker ready with backend: ${readyEvent.capabilities.backend}`
       );

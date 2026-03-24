@@ -26,6 +26,7 @@ export class WasmEngineClient {
   private requestCounter = 0;
 
   public onProgress?: (event: EngineProgressEvent) => void;
+  public onSnapshot?: (event: EngineSnapshotEvent) => void;
 
   constructor() {
     this.worker = new Worker(new URL("../worker/gaWorker.ts", import.meta.url), {
@@ -128,6 +129,10 @@ export class WasmEngineClient {
     if (message.type === "progress") {
       this.onProgress?.(message);
       return;
+    }
+
+    if (message.type === "snapshot") {
+      this.onSnapshot?.(message);
     }
 
     if ("requestId" in message && message.requestId) {

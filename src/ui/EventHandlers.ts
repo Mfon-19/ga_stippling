@@ -2,6 +2,13 @@ import { CanvasManager } from "./CanvasManager";
 import { ImageProcessor } from "../utils/ImageProcessor";
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { CONFIG } from "../utils/config";
+import {
+  EngineProgressEvent,
+  EngineRunConfig,
+  EngineSnapshotEvent,
+  SerializedDot,
+} from "../shared/engineProtocol";
+import { WasmEngineClient } from "../wasm/WasmEngineClient";
 
 export interface UIElements {
   dotCountElement: HTMLElement;
@@ -21,12 +28,14 @@ export interface ProcessingState {
   isEvolutionRunning: boolean;
   generations: number;
   recommendedDotCount: number;
+  workerRunId: string | null;
   animationFrameId?: number;
 }
 
 export class EventHandlers {
   private canvasManager: CanvasManager;
   private imageProcessor: ImageProcessor;
+  private engineClient: WasmEngineClient | null = null;
   private elements: UIElements;
   private state: ProcessingState;
 
@@ -40,9 +49,30 @@ export class EventHandlers {
       isEvolutionRunning: false,
       generations: 0,
       recommendedDotCount: 0,
+      workerRunId: null,
     };
 
     this.initializeEventListeners();
+  }
+
+  /**
+   * Attach the worker-backed engine client after the app finishes bootstrapping.
+   * The worker is optional during the migration, so the UI keeps a clean
+   * fallback path to the original main-thread implementation.
+   */
+  public setEngineClient(engineClient: WasmEngineClient | null): void {
+    this.engineClient = engineClient;
+
+    if (!this.engineClient) {
+      return;
+    }
+
+    this.engineClient.onProgress = this.handleWorkerProgress;
+    this.engineClient.onSnapshot = this.handleWorkerSnapshot;
+
+    if (this.state.currentImage && !this.state.isEvolutionRunning) {
+      void this.syncWorkerWithCurrentTarget();
+    }
   }
 
   /**
@@ -172,6 +202,7 @@ export class EventHandlers {
     this.elements.dotCountInput.style.display = "block";
 
     this.updateDotCountDisplay();
+    void this.syncWorkerImage(processedImageData);
   }
 
   /**
@@ -190,8 +221,15 @@ export class EventHandlers {
   /**
    * Handles starting the evolution process
    */
-  private handleStartEvolution(): void {
+  private async handleStartEvolution(): Promise<void> {
     if (this.state.isEvolutionRunning || !this.state.currentImage) return;
+
+    const runConfig = this.createRunConfig();
+
+    if (this.engineClient) {
+      await this.startWorkerEvolution(runConfig);
+      return;
+    }
 
     const bwCtx = this.canvasManager.getBWContext();
     const imageData = bwCtx.getImageData(
@@ -202,13 +240,14 @@ export class EventHandlers {
     );
 
     this.state.geneticAlgorithm = new GeneticAlgorithm(imageData, {
-      populationSize: CONFIG.GENETIC.DEFAULT_POPULATION_SIZE,
-      mutationRate: CONFIG.GENETIC.DEFAULT_MUTATION_RATE,
-      dotCount: this.state.recommendedDotCount,
-      elitismRatio: CONFIG.GENETIC.ELITISM_RATIO,
+      populationSize: runConfig.populationSize,
+      mutationRate: runConfig.mutationRate,
+      dotCount: runConfig.dotCount,
+      elitismRatio: runConfig.elitismRatio,
     });
 
     this.state.isEvolutionRunning = true;
+    this.state.workerRunId = null;
     this.state.generations = 0;
     this.updateUIState(true);
     this.startEvolutionLoop();
@@ -248,6 +287,13 @@ export class EventHandlers {
     if (this.state.animationFrameId) {
       cancelAnimationFrame(this.state.animationFrameId);
     }
+    if (this.engineClient && this.state.workerRunId) {
+      const runId = this.state.workerRunId;
+      this.state.workerRunId = null;
+      void this.engineClient.stopRun(runId).catch((error) => {
+        console.error("Failed to stop worker evolution:", error);
+      });
+    }
   }
 
   /**
@@ -278,5 +324,113 @@ export class EventHandlers {
   public dispose(): void {
     this.stopEvolution();
     this.updateUIState(false);
+    if (this.engineClient) {
+      this.engineClient.onProgress = undefined;
+      this.engineClient.onSnapshot = undefined;
+    }
+  }
+
+  private createRunConfig(): EngineRunConfig {
+    return {
+      populationSize: CONFIG.GENETIC.DEFAULT_POPULATION_SIZE,
+      mutationRate: CONFIG.GENETIC.DEFAULT_MUTATION_RATE,
+      dotCount: this.state.recommendedDotCount,
+      elitismRatio: CONFIG.GENETIC.ELITISM_RATIO,
+      seed: Date.now() >>> 0,
+      generationsPerBatch: 1,
+      previewIntervalMs: 100,
+    };
+  }
+
+  private async startWorkerEvolution(
+    runConfig: EngineRunConfig
+  ): Promise<void> {
+    if (!this.engineClient || !this.state.currentImage) {
+      return;
+    }
+
+    try {
+      await this.syncWorkerWithCurrentTarget();
+
+      const runId = `run-${Date.now()}`;
+      this.state.workerRunId = runId;
+      this.state.geneticAlgorithm = null;
+      this.state.isEvolutionRunning = true;
+      this.state.generations = 0;
+      this.updateUIState(true);
+      await this.engineClient.startRun(runId, runConfig);
+    } catch (error) {
+      this.state.workerRunId = null;
+      this.state.isEvolutionRunning = false;
+      this.updateUIState(false);
+      console.error("Failed to start worker evolution:", error);
+    }
+  }
+
+  private async syncWorkerWithCurrentTarget(): Promise<void> {
+    if (!this.state.currentImage) {
+      return;
+    }
+
+    const bwCtx = this.canvasManager.getBWContext();
+    const imageData = bwCtx.getImageData(
+      0,
+      0,
+      this.state.currentImage.width,
+      this.state.currentImage.height
+    );
+
+    await this.syncWorkerImage(imageData);
+  }
+
+  private async syncWorkerImage(imageData: ImageData): Promise<void> {
+    if (!this.engineClient || this.state.isEvolutionRunning) {
+      return;
+    }
+
+    const pixelCopy = new Uint8ClampedArray(imageData.data);
+
+    await this.engineClient.loadImage({
+      width: imageData.width,
+      height: imageData.height,
+      format: "rgba8",
+      pixels: pixelCopy.buffer,
+    });
+  }
+
+  private handleWorkerProgress = (event: EngineProgressEvent): void => {
+    if (event.runId !== this.state.workerRunId) {
+      return;
+    }
+
+    this.state.generations = event.generation;
+    this.updateDotCountDisplay();
+  };
+
+  private handleWorkerSnapshot = (event: EngineSnapshotEvent): void => {
+    if (event.runId !== this.state.workerRunId || !event.snapshot.dots) {
+      return;
+    }
+
+    this.drawDots(event.snapshot.dots);
+  };
+
+  private drawDots(dots: SerializedDot[]): void {
+    const evolCtx = this.canvasManager.getEvolContext();
+    const currentImage = this.state.currentImage;
+    if (!currentImage) {
+      return;
+    }
+
+    evolCtx.clearRect(0, 0, currentImage.width, currentImage.height);
+    evolCtx.fillStyle = "white";
+    evolCtx.fillRect(0, 0, currentImage.width, currentImage.height);
+    evolCtx.fillStyle = "black";
+
+    for (const dot of dots) {
+      evolCtx.beginPath();
+      evolCtx.arc(dot.x, dot.y, dot.radius, 0, 2 * Math.PI);
+      evolCtx.fill();
+    }
   }
 }

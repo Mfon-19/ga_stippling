@@ -13,7 +13,7 @@ export interface WasmEngineModule {
 export async function loadEngineModule(): Promise<WasmEngineModule> {
   return {
     capabilities: {
-      backend: "stub",
+      backend: "typescript",
       incrementalFitness: false,
       multiscale: false,
       benchmarkMode: false,

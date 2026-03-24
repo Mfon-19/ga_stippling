@@ -64,9 +64,48 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 └── .github/workflows/ # CI for TS, WASM, native CLI, and benchmarks
 ```
 
+## Current Progress
+
+### Completed Sprints
+
+1. Cleanup and baseline scaffolding
+   - README drift fixed
+   - obvious dead code removed from the current TypeScript app
+   - `docs/`, `benchmarks/`, and `fixtures/` scaffolding added
+   - migration plan documented in this file
+2. Worker/WASM boundary scaffold
+   - typed worker protocol added
+   - worker entrypoint added
+   - browser client wrapper added
+   - app startup now boots a worker-backed engine boundary
+3. Native C++ scaffold
+   - initial `cpp/` tree added
+   - CMake build added
+   - shared native engine surface added
+   - native CLI stub added
+   - native smoke test added
+
+### Current State
+
+- The browser app still uses the original main-thread TypeScript optimizer for actual evolution work.
+- The worker boundary exists and is typed, but it still needs to become the default runtime path for browser optimization.
+- The native C++ engine exists as a documented scaffold, not yet as a feature-parity implementation.
+- Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
+
+### Remaining High-Priority Work
+
+1. Make the worker boundary usable from the UI for real image/run orchestration.
+2. Replace the current worker stub behavior with a real backend adapter.
+3. Move preprocessing and target loading behind the worker/native boundary.
+4. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
+5. Implement incremental fitness in the native engine.
+6. Add multiscale optimization, stronger search heuristics, and reproducible benchmarking.
+
 ## Delivery Phases
 
 ### Phase 1: Cleanup and Baseline
+
+Status: partially complete
 
 Purpose: make the repo look intentional before major migration work begins.
 
@@ -85,6 +124,8 @@ Notes:
 
 ### Phase 2: Worker Protocol and WASM Build Skeleton
 
+Status: partially complete
+
 Purpose: define stable integration boundaries before the heavy port begins.
 
 Deliverables:
@@ -100,6 +141,8 @@ Important design rule:
 - Keep the JS/WASM boundary coarse. Transfer image buffers once, run many generations per worker tick, and send compact progress back.
 
 ### Phase 3: Minimal C++ Engine Parity
+
+Status: started
 
 Purpose: replace the TypeScript optimizer path with a functioning worker-hosted C++ engine.
 
@@ -118,6 +161,8 @@ Important design rule:
 
 ### Phase 4: Incremental Fitness
 
+Status: not started
+
 Purpose: replace the current full-raster full-population recompute with a materially stronger fitness engine.
 
 Deliverables:
@@ -135,6 +180,8 @@ Implementation direction:
 
 ### Phase 5: Multiscale Optimization
 
+Status: not started
+
 Purpose: improve convergence speed and make the system more sophisticated than a brute-force single-scale search.
 
 Deliverables:
@@ -150,6 +197,8 @@ Suggested first schedule:
 - `1/8 -> 1/4 -> 1/2 -> 1x`
 
 ### Phase 6: Search Strategy Upgrades
+
+Status: not started
 
 Purpose: replace simplistic search logic with a more defensible optimization system.
 
@@ -167,6 +216,8 @@ Replace:
 
 ### Phase 7: Better Preprocessing and Dot Density Control
 
+Status: not started
+
 Purpose: improve how target structure is converted into stipple priorities.
 
 Deliverables:
@@ -181,6 +232,8 @@ Important outcome:
 - Dot placement should be driven by image structure, not just thresholded darkness.
 
 ### Phase 8: Measurability and Reproducibility
+
+Status: not started
 
 Purpose: make the project demonstrably engineering-driven rather than visually interesting only.
 
@@ -202,6 +255,8 @@ Outputs:
 
 ### Phase 9: Outputs That Matter
 
+Status: not started
+
 Purpose: turn the engine into a useful tool, not just an interactive demo.
 
 Deliverables:
@@ -217,6 +272,8 @@ Why this matters:
 - The CLI plus export pipeline gives the C++ engine value outside the browser, which justifies the architecture.
 
 ### Phase 10: Tests, CI, and Final Repo Sharpness
+
+Status: started
 
 Purpose: make the system look finished and trustworthy.
 
@@ -275,13 +332,13 @@ The migration is successful when:
 - the repo has tests, CI, fixtures, and cleaned-up documentation
 - a new engineer can read the code and understand the critical paths without reverse-engineering everything
 
-## Suggested First Milestone
+## Next Execution Slice
 
-The best first milestone is:
+The next concrete slice of work is:
 
-1. clean up the repo and baseline it
-2. define the worker protocol
-3. stand up the C++/WASM build skeleton
-4. implement a minimal deterministic engine parity path
+1. route browser image/load/start/stop flow through the worker boundary
+2. replace the worker stub with a real adapter that can run the current algorithm off the UI thread
+3. keep the adapter interface stable so the TypeScript backend can later be swapped for the C++/WASM backend
+4. begin pushing preprocessing and target representation toward the worker/native side
 
-That gives the project a stable foundation before the harder work begins on incremental fitness, multiscale optimization, and advanced search strategies.
+That keeps the codebase moving toward the C++ architecture without blocking on the full native port.
