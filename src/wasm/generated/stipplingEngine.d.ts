@@ -44,8 +44,29 @@ export interface GeneratedStipplingEngineModule {
     outputPointer: number,
     capacity: number
   ): number;
+  _stippling_engine_best_svg_byte_length(
+    enginePointer: number,
+    scale: number
+  ): number;
+  _stippling_engine_copy_best_svg(
+    enginePointer: number,
+    outputPointer: number,
+    capacity: number,
+    scale: number
+  ): number;
+  _stippling_engine_best_png_byte_length(
+    enginePointer: number,
+    scale: number
+  ): number;
+  _stippling_engine_copy_best_png(
+    enginePointer: number,
+    outputPointer: number,
+    capacity: number,
+    scale: number
+  ): number;
   _stippling_engine_optimizer_generation(enginePointer: number): number;
   _stippling_engine_optimizer_best_fitness(enginePointer: number): number;
+  _stippling_engine_validate_optimizer(enginePointer: number): number;
   _stippling_engine_last_error(enginePointer: number): number;
 }
 

@@ -2,6 +2,9 @@ import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { RasterImageProcessor } from "../shared/RasterImageProcessor";
 import { createSeededRandomSource } from "../shared/random";
 import {
+  EngineArtifactEvent,
+  EngineExportFormat,
+  EngineExportOptions,
   EngineRunMetrics,
   EngineRunConfig,
   EngineSnapshotEvent,
@@ -131,6 +134,15 @@ export class TypescriptEngineBackend implements WorkerEngineBackend {
         dots: this.serializeBestDots(),
       },
     };
+  }
+
+  public exportArtifact(
+    _requestId: string,
+    _runId: string,
+    _format: EngineExportFormat,
+    _options?: EngineExportOptions
+  ): EngineArtifactEvent {
+    throw new Error("Artifact export is only supported by the native WASM backend");
   }
 
   public activeRunId(): string | null {

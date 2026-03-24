@@ -21,6 +21,7 @@ export interface EngineCapabilities {
   benchmarkMode: boolean;
   exportSvg: boolean;
   exportPng: boolean;
+  exportTimelapse: boolean;
 }
 
 export interface SerializedImageBuffer {
@@ -64,6 +65,13 @@ export interface EngineSnapshot {
   generation: number;
   dots?: SerializedDot[];
   raster?: ArrayBuffer;
+}
+
+export type EngineExportFormat = "svg" | "png" | "timelapse-svg";
+
+export interface EngineExportOptions {
+  scale?: number;
+  frameDurationMs?: number;
 }
 
 export interface EngineRunMetrics {
@@ -116,6 +124,13 @@ export interface RequestStatusCommand extends BaseCommand {
   type: "request-status";
 }
 
+export interface ExportArtifactCommand extends BaseCommand {
+  type: "export-artifact";
+  runId: string;
+  format: EngineExportFormat;
+  options?: EngineExportOptions;
+}
+
 export type EngineCommand =
   | InitializeEngineCommand
   | PrepareTargetCommand
@@ -123,7 +138,8 @@ export type EngineCommand =
   | PauseRunCommand
   | StopRunCommand
   | RequestSnapshotCommand
-  | RequestStatusCommand;
+  | RequestStatusCommand
+  | ExportArtifactCommand;
 
 export interface EngineReadyEvent {
   type: "ready";
@@ -177,6 +193,16 @@ export interface EngineErrorEvent {
   recoverable: boolean;
 }
 
+export interface EngineArtifactEvent {
+  type: "artifact";
+  requestId: string;
+  runId: string;
+  format: EngineExportFormat;
+  mimeType: string;
+  filename: string;
+  data: ArrayBuffer;
+}
+
 export type EngineEvent =
   | EngineReadyEvent
   | EngineAckEvent
@@ -184,4 +210,5 @@ export type EngineEvent =
   | EngineStatusEvent
   | EngineProgressEvent
   | EngineSnapshotEvent
-  | EngineErrorEvent;
+  | EngineErrorEvent
+  | EngineArtifactEvent;

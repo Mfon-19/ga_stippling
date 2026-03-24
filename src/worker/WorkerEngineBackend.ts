@@ -1,4 +1,7 @@
 import {
+  EngineArtifactEvent,
+  EngineExportFormat,
+  EngineExportOptions,
   EngineProgressEvent,
   EngineRunConfig,
   EngineSnapshotEvent,
@@ -28,5 +31,11 @@ export interface WorkerEngineBackend {
   hasImage(): boolean;
   activeRunId(): string | null;
   createSnapshotEvent(requestId: string, runId: string): EngineSnapshotEvent;
+  exportArtifact(
+    requestId: string,
+    runId: string,
+    format: EngineExportFormat,
+    options?: EngineExportOptions
+  ): EngineArtifactEvent;
   dispose(): void;
 }

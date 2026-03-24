@@ -10,6 +10,9 @@ import {
   TargetPreparedEvent,
   TargetProcessingConfig,
   EngineAckEvent,
+  EngineArtifactEvent,
+  EngineExportFormat,
+  EngineExportOptions,
 } from "../shared/engineProtocol";
 
 interface PendingRequest {
@@ -106,6 +109,20 @@ export class WasmEngineClient {
       runId,
       includeDots,
       includeRaster,
+    });
+  }
+
+  public exportArtifact(
+    runId: string,
+    format: EngineExportFormat,
+    options?: EngineExportOptions
+  ): Promise<EngineArtifactEvent> {
+    return this.sendCommand<EngineArtifactEvent>({
+      type: "export-artifact",
+      requestId: this.nextRequestId("artifact"),
+      runId,
+      format,
+      options,
     });
   }
 

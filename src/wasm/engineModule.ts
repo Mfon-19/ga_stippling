@@ -31,6 +31,8 @@ export interface WasmEngineInstance {
   initializeOptimizer(): void;
   evolveBatch(): OptimizerBatchResult;
   getBestDots(): SerializedDot[];
+  exportBestSvg(scale: number): string;
+  exportBestPng(scale: number): ArrayBuffer;
   hasImage(): boolean;
   heapByteLength(): number;
   dispose(): void;
@@ -181,6 +183,54 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  public exportBestSvg(scale: number): string {
+    const byteLength = this.module._stippling_engine_best_svg_byte_length(
+      this.enginePointer,
+      scale
+    );
+    const outputPointer = this.allocateBytes(byteLength);
+
+    try {
+      const copiedByteLength = this.module._stippling_engine_copy_best_svg(
+        this.enginePointer,
+        outputPointer,
+        byteLength,
+        scale
+      );
+      const bytes = new Uint8Array(copiedByteLength);
+      bytes.set(
+        this.module.HEAPU8.subarray(outputPointer, outputPointer + copiedByteLength)
+      );
+      return new TextDecoder().decode(bytes);
+    } finally {
+      this.module._free(outputPointer);
+    }
+  }
+
+  public exportBestPng(scale: number): ArrayBuffer {
+    const byteLength = this.module._stippling_engine_best_png_byte_length(
+      this.enginePointer,
+      scale
+    );
+    const outputPointer = this.allocateBytes(byteLength);
+
+    try {
+      const copiedByteLength = this.module._stippling_engine_copy_best_png(
+        this.enginePointer,
+        outputPointer,
+        byteLength,
+        scale
+      );
+      const bytes = new Uint8Array(copiedByteLength);
+      bytes.set(
+        this.module.HEAPU8.subarray(outputPointer, outputPointer + copiedByteLength)
+      );
+      return bytes.buffer;
+    } finally {
+      this.module._free(outputPointer);
+    }
+  }
+
   public hasImage(): boolean {
     return this.imageLoaded;
   }
@@ -257,8 +307,9 @@ class NativeWasmEngineModule implements WasmEngineModule {
     incrementalFitness: true,
     multiscale: false,
     benchmarkMode: true,
-    exportSvg: false,
-    exportPng: false,
+    exportSvg: true,
+    exportPng: true,
+    exportTimelapse: true,
   };
 
   constructor(private module: GeneratedStipplingEngineModule) {}

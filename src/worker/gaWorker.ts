@@ -4,6 +4,7 @@ import {
   EngineCommand,
   EngineEvent,
   EngineCapabilities,
+  EngineArtifactEvent,
   EngineSnapshotEvent,
   EngineStatus,
   EngineStatusEvent,
@@ -97,6 +98,25 @@ async function handleCommand(command: EngineCommand): Promise<void> {
       case "request-status":
         postEvent(createStatusEvent(command.requestId));
         return;
+      case "export-artifact":
+        ensureActiveRun(command.runId);
+        postArtifact(
+          state.backend?.exportArtifact(
+            command.requestId,
+            command.runId,
+            command.format,
+            command.options
+          ) ?? {
+            type: "artifact",
+            requestId: command.requestId,
+            runId: command.runId,
+            format: command.format,
+            mimeType: "application/octet-stream",
+            filename: "artifact.bin",
+            data: new ArrayBuffer(0),
+          }
+        );
+        return;
       default:
         assertNever(command);
     }
@@ -170,6 +190,7 @@ function createTypescriptFallbackModule(): WasmEngineModule {
     benchmarkMode: false,
     exportSvg: false,
     exportPng: false,
+    exportTimelapse: false,
   };
 
   return {
@@ -202,6 +223,10 @@ function postEvent(
   transferables: Transferable[] = []
 ): void {
   workerScope.postMessage(event, transferables);
+}
+
+function postArtifact(event: EngineArtifactEvent): void {
+  postEvent(event, [event.data]);
 }
 
 function toErrorMessage(error: unknown): string {

@@ -1,4 +1,7 @@
 import {
+  EngineArtifactEvent,
+  EngineExportFormat,
+  EngineExportOptions,
   EngineRunMetrics,
   EngineRunConfig,
   EngineSnapshotEvent,
@@ -6,6 +9,7 @@ import {
   SerializedImageBuffer,
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
+import { TimelapseFrame, createTextArtifact, renderTimelapseSvg } from "../shared/stippleExport";
 import { WasmEngineInstance } from "../wasm/engineModule";
 import { BackendCallbacks, WorkerEngineBackend } from "./WorkerEngineBackend";
 
@@ -22,6 +26,9 @@ export class WasmEngineBackend implements WorkerEngineBackend {
   private currentConfig: EngineRunConfig | null = null;
   private startedAt = 0;
   private currentSeed = 0;
+  private preparedWidth = 0;
+  private preparedHeight = 0;
+  private timelapseFrames: TimelapseFrame[] = [];
 
   constructor(private engine: WasmEngineInstance) {}
 
@@ -32,6 +39,8 @@ export class WasmEngineBackend implements WorkerEngineBackend {
   ): TargetPreparedEvent {
     this.stop();
     const preparedTarget = this.engine.prepareTarget(image, processing);
+    this.preparedWidth = preparedTarget.image.width;
+    this.preparedHeight = preparedTarget.image.height;
 
     return {
       type: "target-prepared",
@@ -58,9 +67,11 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     this.currentConfig = config;
     this.startedAt = performance.now();
     this.currentSeed = config.seed;
+    this.timelapseFrames = [];
 
     this.engine.configure(config);
     this.engine.initializeOptimizer();
+    this.captureFrame(0);
     this.scheduleNextBatch(callbacks);
   }
 
@@ -77,6 +88,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     this.generation = 0;
     this.currentConfig = null;
     this.startedAt = 0;
+    this.timelapseFrames = [];
   }
 
   public hasImage(): boolean {
@@ -103,6 +115,58 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     };
   }
 
+  public exportArtifact(
+    requestId: string,
+    runId: string,
+    format: EngineExportFormat,
+    options?: EngineExportOptions
+  ): EngineArtifactEvent {
+    if (this.runId !== runId) {
+      throw new Error(`Run ${runId} is not active`);
+    }
+
+    const scale = Math.max(1, Math.floor(options?.scale ?? 4));
+
+    switch (format) {
+      case "svg":
+        return createTextArtifact(
+          requestId,
+          runId,
+          format,
+          "image/svg+xml",
+          `stippling-${runId}.svg`,
+          this.engine.exportBestSvg(scale)
+        );
+      case "png":
+        return {
+          type: "artifact",
+          requestId,
+          runId,
+          format,
+          mimeType: "image/png",
+          filename: `stippling-${runId}.png`,
+          data: this.engine.exportBestPng(scale),
+        };
+      case "timelapse-svg":
+        return createTextArtifact(
+          requestId,
+          runId,
+          format,
+          "image/svg+xml",
+          `stippling-${runId}-timelapse.svg`,
+          renderTimelapseSvg(
+            this.timelapseFrames,
+            this.preparedWidth,
+            this.preparedHeight,
+            scale,
+            options?.frameDurationMs ?? 120
+          )
+        );
+      default:
+        throw new Error(`Unsupported export format: ${format satisfies never}`);
+    }
+  }
+
   public dispose(): void {
     this.stop();
     this.engine.dispose();
@@ -119,6 +183,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
       const batchDurationMs = performance.now() - batchStartedAt;
       this.generation = progress.generation;
       const metrics = this.createRunMetrics(progress.bestFitness, batchDurationMs);
+      this.captureFrame(progress.generation);
 
       callbacks.onProgress({
         type: "progress",
@@ -164,5 +229,12 @@ export class WasmEngineBackend implements WorkerEngineBackend {
       // approximation of native memory pressure.
       usedHeapBytes: this.engine.heapByteLength(),
     };
+  }
+
+  private captureFrame(generation: number): void {
+    this.timelapseFrames.push({
+      generation,
+      dots: this.engine.getBestDots(),
+    });
   }
 }
