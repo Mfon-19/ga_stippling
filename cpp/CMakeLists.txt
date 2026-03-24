@@ -10,6 +10,7 @@ add_library(
   stippling_engine
   STATIC
   engine/src/engine.cpp
+  engine/src/raster_grid.cpp
 )
 
 target_include_directories(
@@ -26,4 +27,8 @@ enable_testing()
 add_executable(stippling_smoke_test tests/smoke_test.cpp)
 target_link_libraries(stippling_smoke_test PRIVATE stippling_engine)
 
+add_executable(stippling_raster_grid_test tests/raster_grid_test.cpp)
+target_link_libraries(stippling_raster_grid_test PRIVATE stippling_engine)
+
 add_test(NAME stippling_smoke_test COMMAND stippling_smoke_test)
+add_test(NAME stippling_raster_grid_test COMMAND stippling_raster_grid_test)

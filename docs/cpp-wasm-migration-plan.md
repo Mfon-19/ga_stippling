@@ -98,11 +98,15 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - C++ engine now owns target-processing configuration and target statistics
    - native preprocessing path can convert rgba input into a thresholded target image
    - CLI and smoke test now exercise target preparation instead of only config storage
+7. Incremental raster groundwork
+   - native dot and raster-grid primitives added
+   - overlap-aware coverage tracking added for binary stipple rasters
+   - incremental dot updates now have correctness tests against full redraws
 
 ### Current State
 
 - The browser app now routes target preparation and optimization through the worker-backed TypeScript backend when the worker is available.
-- The native C++ engine now has a real target-preparation API, but it is still not a feature-parity optimizer implementation.
+- The native C++ engine now has a real target-preparation API and incremental raster foundations, but it is still not a feature-parity optimizer implementation.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 
@@ -110,7 +114,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 
 1. Replace the worker TypeScript backend with a real C++/WASM adapter.
 2. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
-3. Implement incremental fitness in the native engine.
+3. Build a full native optimization loop on top of the raster-grid/incremental-update foundation.
 4. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
 5. Add multiscale optimization and stronger search heuristics.
 6. Expand exports, CLI workflows, tests, and CI.
