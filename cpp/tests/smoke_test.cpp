@@ -39,7 +39,7 @@ int main() {
   assert(processed.format == stippling::PixelFormat::rgba8);
   assert(engine.target_stats().black_pixels == 3);
   assert(engine.target_stats().total_pixels == 4);
-  assert(engine.target_stats().recommended_dot_count == 150000);
+  assert(engine.target_stats().recommended_dot_count == 1);
 
   stippling::ImageBuffer image{
       .format = stippling::PixelFormat::grayscale8,

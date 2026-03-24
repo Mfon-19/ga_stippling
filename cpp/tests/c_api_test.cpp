@@ -55,10 +55,10 @@ int main() {
   const StipplingTargetStats stats = stippling_engine_target_stats(engine);
   assert(stats.black_pixels == 3);
   assert(stats.total_pixels == 4);
-  assert(stats.recommended_dot_count == 150000);
+  assert(stats.recommended_dot_count == 1);
   assert(stippling_engine_target_black_pixels(engine) == 3);
   assert(stippling_engine_target_total_pixels(engine) == 4);
-  assert(stippling_engine_target_recommended_dot_count(engine) == 150000);
+  assert(stippling_engine_target_recommended_dot_count(engine) == 1);
   assert(stippling_engine_prepared_image_width(engine) == 2);
   assert(stippling_engine_prepared_image_height(engine) == 2);
   assert(stippling_engine_prepared_image_byte_length(engine) == rgba_pixels.size());

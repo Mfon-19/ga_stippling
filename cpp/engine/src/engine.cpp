@@ -22,6 +22,9 @@ bool ImageBuffer::valid() const noexcept {
 
 namespace {
 
+constexpr double kRecommendedDotsPerBlackPixel = 0.02;
+constexpr double kMaxRecommendedDotPercentage = 0.04;
+
 void convert_to_grayscale(ImageBuffer& image) {
   for (std::size_t index = 0; index < image.pixels.size(); index += 4) {
     const auto gray = static_cast<std::uint8_t>(
@@ -102,8 +105,24 @@ TargetStats calculate_target_stats(const ImageBuffer& image,
           ? 0.0
           : static_cast<double>(stats.black_pixels) /
                 static_cast<double>(stats.total_pixels);
-  stats.recommended_dot_count = static_cast<std::uint32_t>(
-      std::ceil(stats.black_percentage * static_cast<double>(max_dot_count)));
+
+  if (stats.black_pixels == 0) {
+    stats.recommended_dot_count = 0;
+    return stats;
+  }
+
+  // Recommend one dot for roughly every 50 dark pixels, then cap the result
+  // by image area so dark photos do not immediately saturate the canvas.
+  const auto density_based_count = static_cast<std::uint32_t>(
+      std::ceil(static_cast<double>(stats.black_pixels) *
+                kRecommendedDotsPerBlackPixel));
+  const auto area_capped_count = static_cast<std::uint32_t>(
+      std::ceil(static_cast<double>(stats.total_pixels) *
+                kMaxRecommendedDotPercentage));
+  stats.recommended_dot_count =
+      std::min(max_dot_count,
+               std::max<std::uint32_t>(
+                   1u, std::min(density_based_count, area_capped_count)));
 
   return stats;
 }

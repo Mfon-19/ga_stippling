@@ -2,6 +2,7 @@ import {
   TargetProcessingConfig,
   TargetStats,
 } from "./engineProtocol";
+import { CONFIG } from "../utils/config";
 
 export interface PreprocessResult {
   imageData: ImageData;
@@ -134,12 +135,23 @@ export class RasterImageProcessor {
     }
 
     const blackPercentage = blackPixels / totalPixels;
+    // Recommend one dot for roughly every 50 dark pixels, then cap the result
+    // by overall image area so dark portraits do not start with a near-solid fill.
+    const densityBasedCount = Math.ceil(
+      blackPixels * CONFIG.IMAGE.RECOMMENDED_DOTS_PER_BLACK_PIXEL
+    );
+    const areaCappedCount = Math.ceil(
+      totalPixels * CONFIG.IMAGE.MAX_RECOMMENDED_DOT_PERCENTAGE
+    );
 
     return {
       blackPixels,
       totalPixels,
       blackPercentage,
-      recommendedDotCount: Math.ceil(blackPercentage * maxDotCount),
+      recommendedDotCount:
+        blackPixels === 0
+          ? 0
+          : Math.min(maxDotCount, Math.max(1, Math.min(densityBasedCount, areaCappedCount))),
     };
   }
 }
