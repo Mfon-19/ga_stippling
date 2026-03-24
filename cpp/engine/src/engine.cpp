@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "stippling/engine/optimizer.hpp"
+
 namespace stippling {
 
 bool ImageBuffer::valid() const noexcept {
@@ -106,11 +108,28 @@ TargetStats calculate_target_stats(const ImageBuffer& image,
   return stats;
 }
 
+std::vector<std::uint8_t> extract_target_channel(const ImageBuffer& image) {
+  std::vector<std::uint8_t> target(
+      static_cast<std::size_t>(image.width * image.height), 255);
+
+  if (image.format == PixelFormat::grayscale8) {
+    return image.pixels;
+  }
+
+  for (std::size_t target_index = 0; target_index < target.size(); ++target_index) {
+    target[target_index] = image.pixels[target_index * 4];
+  }
+
+  return target;
+}
+
 }  // namespace
 
 Engine::Engine() {
   status_ = EngineStatus::idle;
 }
+
+Engine::~Engine() = default;
 
 const EngineCapabilities& Engine::capabilities() const noexcept {
   return capabilities_;
@@ -136,8 +155,13 @@ bool Engine::has_image() const noexcept {
   return image_.valid();
 }
 
+bool Engine::has_optimizer() const noexcept {
+  return optimizer_ != nullptr;
+}
+
 void Engine::configure(const EngineConfig& config) {
   config_ = config;
+  optimizer_.reset();
   status_ = has_image() ? EngineStatus::image_loaded : EngineStatus::configured;
 }
 
@@ -147,6 +171,7 @@ void Engine::load_image(ImageBuffer image) {
   }
 
   image_ = std::move(image);
+  optimizer_.reset();
   status_ = EngineStatus::image_loaded;
 }
 
@@ -170,9 +195,44 @@ ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
   apply_threshold(processed, config.threshold);
   image_ = processed;
   target_stats_ = calculate_target_stats(processed, config.max_dot_count);
+  optimizer_.reset();
   status_ = EngineStatus::image_loaded;
 
   return processed;
+}
+
+void Engine::initialize_optimizer() {
+  if (!has_image()) {
+    throw std::logic_error("Cannot initialize optimizer without a prepared target");
+  }
+
+  optimizer_ = std::make_unique<Optimizer>(
+      image_.width, image_.height, extract_target_channel(image_), config_);
+  optimizer_->initialize();
+}
+
+OptimizerProgress Engine::evolve_batch() {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return optimizer_->evolve_batch();
+}
+
+const std::vector<Dot>& Engine::best_dots() const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return optimizer_->best_dots();
+}
+
+OptimizerProgress Engine::optimizer_progress() const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  return optimizer_->progress();
 }
 
 std::string Engine::status_string() const {

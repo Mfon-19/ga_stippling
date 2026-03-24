@@ -1,10 +1,21 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "stippling/engine/dot.hpp"
+
 namespace stippling {
+
+class Optimizer;
+
+struct OptimizerProgress {
+  std::uint32_t generation{0};
+  double best_fitness{0.0};
+  std::uint64_t best_squared_error{0};
+};
 
 enum class PixelFormat {
   grayscale8,
@@ -65,6 +76,7 @@ struct ImageBuffer {
 class Engine {
  public:
   Engine();
+  ~Engine();
 
   [[nodiscard]] const EngineCapabilities& capabilities() const noexcept;
   [[nodiscard]] EngineStatus status() const noexcept;
@@ -72,12 +84,17 @@ class Engine {
   [[nodiscard]] const ImageBuffer& image() const noexcept;
   [[nodiscard]] const TargetStats& target_stats() const noexcept;
   [[nodiscard]] bool has_image() const noexcept;
+  [[nodiscard]] bool has_optimizer() const noexcept;
 
   void configure(const EngineConfig& config);
   void load_image(ImageBuffer image);
   [[nodiscard]] ImageBuffer prepare_target(
       const ImageBuffer& source_image,
       const TargetProcessingConfig& config);
+  void initialize_optimizer();
+  [[nodiscard]] OptimizerProgress evolve_batch();
+  [[nodiscard]] const std::vector<Dot>& best_dots() const;
+  [[nodiscard]] OptimizerProgress optimizer_progress() const;
 
   [[nodiscard]] std::string status_string() const;
 
@@ -86,6 +103,7 @@ class Engine {
   EngineConfig config_{};
   ImageBuffer image_{};
   TargetStats target_stats_{};
+  std::unique_ptr<Optimizer> optimizer_{};
   EngineStatus status_{EngineStatus::booting};
 };
 
