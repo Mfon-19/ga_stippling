@@ -159,7 +159,7 @@ Once you're satisfied with the result, the engine can export:
 - **PNG** — rasterized output with a hand-written encoder (dependency-free, deterministic)
 - **Timelapse SVG** — an animated SVG showing how the dots evolved over time, assembled from frame snapshots captured during the run
 
-## 6. The C++ ↔ TypeScript Bridge (WASM)
+## The C++ ↔ TypeScript Bridge (WASM)
 
 The bridge is the layer that lets browser TypeScript call the native C++ engine compiled to WebAssembly, without the UI needing to know anything about C++ pointers or WASM memory. That architecture is one of the strongest engineering parts of the project.
 
@@ -265,7 +265,7 @@ There is no separate `.wasm` file. Emscripten compiles the C++ codebase (driven 
 
 Because of the boundary cost, the bridge keeps calls coarse-grained (e.g., prepare a _whole image_, evolve a _whole batch_, copy a _whole snapshot_) instead of constantly pinging the engine for tiny operations.
 
-## 7. Benchmarks
+## Benchmarks
 
 Once the native engine existed, the obvious question was whether all of this extra architecture actually mattered. The benchmark harness in [`scripts/benchmark-headless.ts`](./scripts/benchmark-headless.ts) answers that by comparing two versions of the project under the same conditions:
 
@@ -306,7 +306,7 @@ The benchmark also records final output quality for each backend:
 
 These quality numbers are most useful when read alongside the time-to-quality numbers. The point of this benchmark is not "which backend looks better after the exact same fixed number of generations?" The point is "how much faster can the native engine reach a comparable level of solution quality?" On that measure, the C++/WASM path is decisively ahead.
 
-## 8. Conclusion
+## Conclusion
 
 This started as a final project for my Applied AI class and turned into something more involved than expected: a shared C++ core, a C ABI, a WebAssembly bridge, a worker-hosted runtime, a CLI, export tooling, and reproducible benchmarks; all sharing the same optimization logic.
 
