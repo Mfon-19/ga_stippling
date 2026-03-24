@@ -59,16 +59,26 @@ class Optimizer {
   std::vector<Candidate> population_{};
   OptimizerProgress progress_{};
   mutable RandomGenerator random_;
+  std::vector<double> cumulative_target_weights_{};
+  double total_target_weight_{0.0};
+  double last_best_fitness_{0.0};
+  std::uint32_t stagnation_generations_{0};
 
   void ensure_initialized() const;
+  void build_target_sampler();
   void initialize_population();
   void evaluate_population();
   void evaluate_candidate(Candidate& candidate) const;
   void update_candidate_fitness(Candidate& candidate) const;
   void refresh_progress();
+  void update_search_state();
   std::vector<Candidate> preserve_elites(std::uint32_t elite_count) const;
   Candidate make_child(const Candidate& parent_a, const Candidate& parent_b);
   const Candidate& select_parent();
+  std::size_t sample_target_index();
+  double adaptive_mutation_rate() const;
+  double mutation_distance_scale() const;
+  Dot guided_dot();
   double dot_target_score(const Dot& dot) const;
   Dot random_dot();
   void mutate(Candidate& candidate);

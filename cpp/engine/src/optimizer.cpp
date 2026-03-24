@@ -14,6 +14,14 @@ bool dots_equal(const Dot& left, const Dot& right) {
   return left.x == right.x && left.y == right.y && left.radius == right.radius;
 }
 
+double clamp_position(double value, int limit) {
+  return std::clamp(value, 0.0, static_cast<double>(std::max(0, limit - 1)));
+}
+
+double clamp_radius(double value) {
+  return std::clamp(value, 0.75, 4.0);
+}
+
 }  // namespace
 
 Optimizer::RandomGenerator::RandomGenerator(std::uint32_t seed)
@@ -52,12 +60,16 @@ Optimizer::Optimizer(int width,
   if (config_.dot_count == 0) {
     throw std::invalid_argument("Dot count must be positive");
   }
+
+  build_target_sampler();
 }
 
 void Optimizer::initialize() {
   initialize_population();
   evaluate_population();
   progress_.generation = 0;
+  last_best_fitness_ = progress_.best_fitness;
+  stagnation_generations_ = 0;
 }
 
 OptimizerProgress Optimizer::evolve_batch() {
@@ -79,6 +91,7 @@ OptimizerProgress Optimizer::evolve_batch() {
 
     population_ = std::move(next_population);
     refresh_progress();
+    update_search_state();
     ++progress_.generation;
   }
 
@@ -109,6 +122,18 @@ void Optimizer::ensure_initialized() const {
   }
 }
 
+void Optimizer::build_target_sampler() {
+  cumulative_target_weights_.clear();
+  cumulative_target_weights_.reserve(target_.size());
+  total_target_weight_ = 0.0;
+
+  for (const auto pixel : target_) {
+    const auto darkness = 255.0 - static_cast<double>(pixel);
+    total_target_weight_ += darkness;
+    cumulative_target_weights_.push_back(total_target_weight_);
+  }
+}
+
 void Optimizer::initialize_population() {
   population_.clear();
   population_.reserve(config_.population_size);
@@ -119,7 +144,9 @@ void Optimizer::initialize_population() {
     candidate.dots.reserve(config_.dot_count);
 
     for (std::uint32_t dot_index = 0; dot_index < config_.dot_count; ++dot_index) {
-      candidate.dots.push_back(random_dot());
+      const auto use_guided_seed =
+          total_target_weight_ > 0.0 && random_.next_unit() < 0.85;
+      candidate.dots.push_back(use_guided_seed ? guided_dot() : random_dot());
     }
 
     population_.push_back(std::move(candidate));
@@ -152,6 +179,18 @@ void Optimizer::refresh_progress() {
   progress_.best_squared_error = best->squared_error;
 }
 
+void Optimizer::update_search_state() {
+  constexpr double kImprovementEpsilon = 1e-6;
+
+  if (progress_.best_fitness > last_best_fitness_ + kImprovementEpsilon) {
+    last_best_fitness_ = progress_.best_fitness;
+    stagnation_generations_ = 0;
+    return;
+  }
+
+  ++stagnation_generations_;
+}
+
 void Optimizer::evaluate_candidate(Candidate& candidate) const {
   candidate.grid.clear();
   for (const auto& dot : candidate.dots) {
@@ -176,16 +215,24 @@ std::vector<Optimizer::Candidate> Optimizer::preserve_elites(
 
 Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
                                            const Candidate& parent_b) {
-  Candidate child = parent_a;
+  const auto& primary_parent =
+      parent_a.fitness >= parent_b.fitness ? parent_a : parent_b;
+  const auto& secondary_parent =
+      parent_a.fitness >= parent_b.fitness ? parent_b : parent_a;
+  Candidate child = primary_parent;
+  const auto import_probability =
+      std::min(0.45, 0.15 + static_cast<double>(stagnation_generations_) * 0.02);
 
   for (std::size_t index = 0; index < parent_a.dots.size(); ++index) {
-    const auto& selected_parent =
-        dot_target_score(parent_a.dots[index]) > dot_target_score(parent_b.dots[index])
-            ? parent_a
-            : parent_b;
-    const auto& next_dot = selected_parent.dots[index];
+    const auto& next_dot = secondary_parent.dots[index];
+    const auto current_score = dot_target_score(child.dots[index]);
+    const auto next_score = dot_target_score(next_dot);
 
-    if (!dots_equal(child.dots[index], next_dot)) {
+    // Keep the fitter parent as the base genome, then opportunistically import
+    // darker, better-placed dots from the secondary parent when they look more
+    // promising at the target pixel they occupy.
+    if (next_score > current_score && random_.next_unit() < import_probability &&
+        !dots_equal(child.dots[index], next_dot)) {
       child.squared_error = child.grid.apply_dot_delta_and_update_error(
           child.dots[index], next_dot, target_, child.squared_error);
       child.dots[index] = next_dot;
@@ -198,29 +245,69 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
 }
 
 const Optimizer::Candidate& Optimizer::select_parent() {
-  const auto total_fitness = std::accumulate(
-      population_.begin(), population_.end(), 0.0,
-      [](double sum, const Candidate& candidate) {
-        return sum + candidate.fitness;
-      });
+  constexpr std::size_t kTournamentSize = 4;
+  auto best_index = static_cast<std::size_t>(
+      std::floor(random_.next_unit() * static_cast<double>(population_.size())));
+  best_index = std::min(best_index, population_.size() - 1);
 
-  if (total_fitness <= 0.0) {
-    const auto random_index = static_cast<std::size_t>(
+  for (std::size_t round = 1; round < kTournamentSize; ++round) {
+    auto challenger_index = static_cast<std::size_t>(
         std::floor(random_.next_unit() * static_cast<double>(population_.size())));
-    return population_[std::min(random_index, population_.size() - 1)];
-  }
+    challenger_index = std::min(challenger_index, population_.size() - 1);
 
-  auto threshold = random_.next_unit() * total_fitness;
-  double running_sum = 0.0;
-
-  for (const auto& candidate : population_) {
-    running_sum += candidate.fitness;
-    if (running_sum >= threshold) {
-      return candidate;
+    if (population_[challenger_index].fitness > population_[best_index].fitness) {
+      best_index = challenger_index;
     }
   }
 
-  return population_.back();
+  return population_[best_index];
+}
+
+std::size_t Optimizer::sample_target_index() {
+  if (total_target_weight_ <= 0.0 || cumulative_target_weights_.empty()) {
+    auto random_index = static_cast<std::size_t>(
+        std::floor(random_.next_unit() * static_cast<double>(target_.size())));
+    return std::min(random_index, target_.size() - 1);
+  }
+
+  const auto threshold = random_.next_unit() * total_target_weight_;
+  const auto match = std::upper_bound(cumulative_target_weights_.begin(),
+                                      cumulative_target_weights_.end(), threshold);
+  if (match == cumulative_target_weights_.end()) {
+    return cumulative_target_weights_.size() - 1;
+  }
+
+  return static_cast<std::size_t>(
+      std::distance(cumulative_target_weights_.begin(), match));
+}
+
+double Optimizer::adaptive_mutation_rate() const {
+  const auto multiplier =
+      1.0 + std::min(2.5, static_cast<double>(stagnation_generations_) * 0.1);
+  return std::min(0.85, config_.mutation_rate * multiplier);
+}
+
+double Optimizer::mutation_distance_scale() const {
+  return 1.5 + std::min(8.0, static_cast<double>(stagnation_generations_) * 0.5);
+}
+
+Dot Optimizer::guided_dot() {
+  const auto target_index = sample_target_index();
+  const auto base_x =
+      static_cast<double>(static_cast<int>(target_index % static_cast<std::size_t>(width_)));
+  const auto base_y =
+      static_cast<double>(static_cast<int>(target_index / static_cast<std::size_t>(width_)));
+  const auto darkness =
+      (255.0 - static_cast<double>(target_[target_index])) / 255.0;
+  const auto jitter_scale = darkness > 0.0 ? 2.0 : 0.75;
+
+  return {
+      .x = clamp_position(
+          base_x + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, width_),
+      .y = clamp_position(
+          base_y + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, height_),
+      .radius = clamp_radius(0.9 + darkness * 1.1 + random_.next_unit() * 1.2),
+  };
 }
 
 double Optimizer::dot_target_score(const Dot& dot) const {
@@ -244,21 +331,32 @@ Dot Optimizer::random_dot() {
 }
 
 void Optimizer::mutate(Candidate& candidate) {
+  const auto mutation_rate = adaptive_mutation_rate();
+  const auto distance_scale = mutation_distance_scale();
+  const auto radius_scale =
+      0.35 + std::min(1.5, static_cast<double>(stagnation_generations_) * 0.05);
+
   for (auto& dot : candidate.dots) {
     Dot next_dot = dot;
     bool changed = false;
 
-    if (random_.next_unit() < config_.mutation_rate) {
-      next_dot.x = std::floor(random_.next_unit() * static_cast<double>(width_));
-      changed = true;
-    }
-    if (random_.next_unit() < config_.mutation_rate) {
-      next_dot.y = std::floor(random_.next_unit() * static_cast<double>(height_));
-      changed = true;
-    }
-    if (random_.next_unit() < config_.mutation_rate) {
-      next_dot.radius = 1.0 + random_.next_unit() * 2.0;
-      changed = true;
+    if (random_.next_unit() < mutation_rate) {
+      const auto mutation_mode = random_.next_unit();
+
+      if (mutation_mode < 0.6) {
+        next_dot.x = clamp_position(
+            dot.x + (random_.next_unit() * 2.0 - 1.0) * distance_scale, width_);
+        next_dot.y = clamp_position(
+            dot.y + (random_.next_unit() * 2.0 - 1.0) * distance_scale, height_);
+        next_dot.radius = clamp_radius(
+            dot.radius + (random_.next_unit() * 2.0 - 1.0) * radius_scale);
+      } else if (mutation_mode < 0.85 && total_target_weight_ > 0.0) {
+        next_dot = guided_dot();
+      } else {
+        next_dot = random_dot();
+      }
+
+      changed = !dots_equal(dot, next_dot);
     }
 
     if (changed) {

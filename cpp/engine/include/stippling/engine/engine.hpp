@@ -41,7 +41,7 @@ struct EngineConfig {
   std::uint32_t population_size{100};
   double mutation_rate{0.2};
   std::uint32_t dot_count{0};
-  double elitism_ratio{0.7};
+  double elitism_ratio{0.15};
   std::uint32_t seed{1};
   std::uint32_t generations_per_batch{1};
 };

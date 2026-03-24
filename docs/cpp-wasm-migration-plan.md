@@ -128,6 +128,10 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - the native optimizer now carries per-candidate raster state instead of redrawing from scratch every generation
    - crossover and mutation now update squared error through the raster-grid delta path
    - incremental error updates now have dedicated raster-grid correctness coverage
+15. Initial search-strategy upgrade
+   - native initialization now seeds most dots from darkness-weighted target locations instead of uniform random placement
+   - parent selection now uses tournament selection instead of roulette selection
+   - mutation now adapts to stagnation and prefers local refinement before full reseeding
 
 ### Current State
 
@@ -135,6 +139,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The browser build now has a reproducible Emscripten path and emits a generated native module under `src/wasm/generated/`.
 - The native C++ engine now has a real target-preparation API, a JS-friendly C ABI, and a browser-consumable WASM wrapper.
 - The native optimizer now performs incremental raster/error updates during crossover and mutation instead of recomputing every child from a full redraw.
+- The native search loop is no longer purely naive: it now uses guided seeding, tournament-style selection, and adaptive mutation pressure when progress stalls.
 - The native CLI, C ABI, and browser worker can all read best-dot snapshots from the same engine surface.
 - Basic CI now validates the current browser and native codepaths on every push and pull request.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
@@ -246,7 +251,7 @@ Suggested first schedule:
 
 ### Phase 6: Search Strategy Upgrades
 
-Status: not started
+Status: started
 
 Purpose: replace simplistic search logic with a more defensible optimization system.
 
@@ -261,6 +266,11 @@ Deliverables:
 Replace:
 
 - the current center-pixel crossover heuristic with a richer selection and local-improvement strategy
+
+Implementation direction:
+
+- The first slice is now in place through guided initialization, tournament selection, and adaptive mutation with local refinement.
+- The next step should add a real local-search pass on elites and stronger spatial crossover that does not rely on implicit dot-slot alignment.
 
 ### Phase 7: Better Preprocessing and Dot Density Control
 
