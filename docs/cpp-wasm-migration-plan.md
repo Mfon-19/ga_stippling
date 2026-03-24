@@ -102,22 +102,28 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - native dot and raster-grid primitives added
    - overlap-aware coverage tracking added for binary stipple rasters
    - incremental dot updates now have correctness tests against full redraws
+8. Native C ABI surface
+   - plain C ABI added around native engine config and target preparation
+   - ABI is now testable without directly depending on the C++ classes
+   - this creates a WASM-friendly boundary once an Emscripten toolchain is available
 
 ### Current State
 
 - The browser app now routes target preparation and optimization through the worker-backed TypeScript backend when the worker is available.
 - The native C++ engine now has a real target-preparation API and incremental raster foundations, but it is still not a feature-parity optimizer implementation.
+- A plain C ABI now exists for the native engine, which is the right integration boundary for a future WASM build.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 
 ### Remaining High-Priority Work
 
 1. Replace the worker TypeScript backend with a real C++/WASM adapter.
-2. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
-3. Build a full native optimization loop on top of the raster-grid/incremental-update foundation.
-4. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
-5. Add multiscale optimization and stronger search heuristics.
-6. Expand exports, CLI workflows, tests, and CI.
+2. Install or provision the Emscripten toolchain so the new C ABI can be compiled and wired into the browser worker.
+3. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
+4. Build a full native optimization loop on top of the raster-grid/incremental-update foundation.
+5. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
+6. Add multiscale optimization and stronger search heuristics.
+7. Expand exports, CLI workflows, tests, and CI.
 
 ## Delivery Phases
 
