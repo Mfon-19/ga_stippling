@@ -135,6 +135,18 @@ npm run build
 
 The compiled files will be in the `dist` directory.
 
+### Native Scaffold
+
+The repository now includes an initial C++ engine skeleton under `cpp/` that will become the shared core for the native CLI and the future WASM build.
+
+To configure, build, and test the native scaffold:
+
+```bash
+cmake -S cpp -B cpp/build
+cmake --build cpp/build
+ctest --test-dir cpp/build --output-on-failure
+```
+
 ### Project Structure
 
 - **TypeScript**: For type safety and better code organization

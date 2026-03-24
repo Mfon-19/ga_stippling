@@ -1,0 +1,29 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(stippling_native LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_library(
+  stippling_engine
+  STATIC
+  engine/src/engine.cpp
+)
+
+target_include_directories(
+  stippling_engine
+  PUBLIC
+  engine/include
+)
+
+add_executable(stippling_cli cli/main.cpp)
+target_link_libraries(stippling_cli PRIVATE stippling_engine)
+
+enable_testing()
+
+add_executable(stippling_smoke_test tests/smoke_test.cpp)
+target_link_libraries(stippling_smoke_test PRIVATE stippling_engine)
+
+add_test(NAME stippling_smoke_test COMMAND stippling_smoke_test)
