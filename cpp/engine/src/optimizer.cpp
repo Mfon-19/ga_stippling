@@ -19,7 +19,7 @@ double clamp_position(double value, int limit) {
 }
 
 double clamp_radius(double value) {
-  return std::clamp(value, 0.75, 4.0);
+  return std::clamp(value, 0.45, 1.75);
 }
 
 }  // namespace
@@ -306,7 +306,7 @@ Dot Optimizer::guided_dot() {
           base_x + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, width_),
       .y = clamp_position(
           base_y + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, height_),
-      .radius = clamp_radius(0.9 + darkness * 1.1 + random_.next_unit() * 1.2),
+      .radius = clamp_radius(0.55 + darkness * 0.55 + random_.next_unit() * 0.45),
   };
 }
 
@@ -326,7 +326,7 @@ Dot Optimizer::random_dot() {
   return {
       .x = std::floor(random_.next_unit() * static_cast<double>(width_)),
       .y = std::floor(random_.next_unit() * static_cast<double>(height_)),
-      .radius = 1.0 + random_.next_unit() * 2.0,
+      .radius = 0.5 + random_.next_unit() * 0.9,
   };
 }
 
@@ -334,7 +334,7 @@ void Optimizer::mutate(Candidate& candidate) {
   const auto mutation_rate = adaptive_mutation_rate();
   const auto distance_scale = mutation_distance_scale();
   const auto radius_scale =
-      0.35 + std::min(1.5, static_cast<double>(stagnation_generations_) * 0.05);
+      0.18 + std::min(0.55, static_cast<double>(stagnation_generations_) * 0.02);
 
   for (auto& dot : candidate.dots) {
     Dot next_dot = dot;

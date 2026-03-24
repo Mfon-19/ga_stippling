@@ -72,6 +72,6 @@ export class Individual {
   }
 
   private randRadius(): number {
-    return 1 + this.random.next() * 2;
+    return 0.5 + this.random.next() * 0.9;
   }
 }
