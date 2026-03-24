@@ -70,6 +70,15 @@ StipplingTargetStats to_c_stats(const stippling::TargetStats& stats) {
   };
 }
 
+StipplingOptimizerProgress to_c_progress(
+    const stippling::OptimizerProgress& progress) {
+  return {
+      .generation = progress.generation,
+      .best_fitness = progress.best_fitness,
+      .best_squared_error = progress.best_squared_error,
+  };
+}
+
 template <typename Callback>
 int with_error_boundary(StipplingEngine* engine, Callback&& callback) {
   if (engine == nullptr) {
@@ -121,12 +130,38 @@ int stippling_engine_prepare_target(
   });
 }
 
+int stippling_engine_initialize_optimizer(StipplingEngine* engine) {
+  return with_error_boundary(engine, [&]() {
+    engine->engine.initialize_optimizer();
+  });
+}
+
+int stippling_engine_evolve_batch(StipplingEngine* engine,
+                                  StipplingOptimizerProgress* progress) {
+  if (progress == nullptr) {
+    return -1;
+  }
+
+  return with_error_boundary(engine, [&]() {
+    *progress = to_c_progress(engine->engine.evolve_batch());
+  });
+}
+
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine) {
   if (engine == nullptr) {
     return {};
   }
 
   return to_c_stats(engine->engine.target_stats());
+}
+
+StipplingOptimizerProgress stippling_engine_optimizer_progress(
+    const StipplingEngine* engine) {
+  if (engine == nullptr) {
+    return {};
+  }
+
+  return to_c_progress(engine->engine.optimizer_progress());
 }
 
 const char* stippling_engine_last_error(const StipplingEngine* engine) {

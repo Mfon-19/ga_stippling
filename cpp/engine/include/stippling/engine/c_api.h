@@ -36,6 +36,12 @@ typedef struct StipplingTargetStats {
   uint32_t recommended_dot_count;
 } StipplingTargetStats;
 
+typedef struct StipplingOptimizerProgress {
+  uint32_t generation;
+  double best_fitness;
+  uint64_t best_squared_error;
+} StipplingOptimizerProgress;
+
 typedef struct StipplingImageBufferView {
   int width;
   int height;
@@ -53,8 +59,13 @@ int stippling_engine_prepare_target(
     StipplingEngine* engine,
     const StipplingImageBufferView* source_image,
     const StipplingTargetProcessingConfig* config);
+int stippling_engine_initialize_optimizer(StipplingEngine* engine);
+int stippling_engine_evolve_batch(StipplingEngine* engine,
+                                  StipplingOptimizerProgress* progress);
 
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine);
+StipplingOptimizerProgress stippling_engine_optimizer_progress(
+    const StipplingEngine* engine);
 const char* stippling_engine_last_error(const StipplingEngine* engine);
 
 #ifdef __cplusplus

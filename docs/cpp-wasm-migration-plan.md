@@ -110,6 +110,10 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - deterministic native optimizer added on top of the shared engine surface
    - engine can now initialize a native population and step batches of generations
    - optimizer determinism is covered by a native test
+10. Native ABI and CLI optimizer stepping
+   - C ABI now exposes optimizer initialization and batch stepping
+   - native C API test now exercises optimizer progress, not only target preparation
+   - CLI now prints optimizer progress metrics after stepping a generation batch
 
 ### Current State
 
@@ -117,6 +121,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The native C++ engine now has a real target-preparation API and incremental raster foundations, but it is still not a feature-parity optimizer implementation.
 - A plain C ABI now exists for the native engine, which is the right integration boundary for a future WASM build.
 - The native core now has a deterministic optimizer loop, but it still uses full redraw fitness rather than the future incremental path.
+- The native CLI and C ABI can now report optimizer progress, which is enough to support the first browser-side WASM adapter once the toolchain is installed.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 

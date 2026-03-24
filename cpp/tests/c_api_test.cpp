@@ -42,6 +42,16 @@ int main() {
   assert(stats.total_pixels == 4);
   assert(stats.recommended_dot_count == 150000);
 
+  assert(stippling_engine_initialize_optimizer(engine) == 0);
+  const StipplingOptimizerProgress initial_progress =
+      stippling_engine_optimizer_progress(engine);
+  assert(initial_progress.generation == 0);
+
+  StipplingOptimizerProgress evolved{};
+  assert(stippling_engine_evolve_batch(engine, &evolved) == 0);
+  assert(evolved.generation == 1);
+  assert(evolved.best_squared_error >= 0);
+
   stippling_engine_destroy(engine);
   return 0;
 }
