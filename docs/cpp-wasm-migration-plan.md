@@ -117,6 +117,9 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 11. Native snapshot ABI
    - C ABI can now report best-dot counts and copy best-dot snapshots
    - this gives the future WASM adapter a native path for preview rendering data
+12. CI foundation
+   - GitHub Actions workflow added for the web build and native C++ build/tests
+   - repo now has automated validation for the two active implementation paths
 
 ### Current State
 
@@ -126,6 +129,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The native core now has a deterministic optimizer loop, but it still uses full redraw fitness rather than the future incremental path.
 - The native CLI and C ABI can now report optimizer progress, which is enough to support the first browser-side WASM adapter once the toolchain is installed.
 - The native ABI can now surface best-dot snapshot data for browser preview rendering once the WASM build path exists.
+- Basic CI now validates the current browser and native codepaths on every push and pull request.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 

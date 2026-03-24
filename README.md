@@ -162,6 +162,7 @@ ctest --test-dir cpp/build --output-on-failure
 - **Canvas API**: For image processing and rendering
 - **Modular Design**: For better separation of concerns
 - **Docs**: The `docs/` folder tracks the C++/WASM migration plan and related design notes
+- **CI**: GitHub Actions validates both the web build and the native C++ build/test path
 
 ## Future Development
 
