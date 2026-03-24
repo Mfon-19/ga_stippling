@@ -1,10 +1,20 @@
 # Benchmarks
 
-This directory is reserved for benchmark fixtures, saved benchmark configurations, and generated reports.
+This directory stores benchmark documentation, fixed benchmark configs, and local benchmark outputs.
 
-Planned contents:
+Run the current headless image benchmark with:
 
-- representative input images
-- saved run configurations with fixed seeds
-- machine-readable benchmark outputs
-- timing and convergence summaries for browser and native runs
+```bash
+npm run benchmark
+```
+
+The benchmark runner:
+
+- decodes the root-level `jobs.jpeg` and `landscape.avif` fixtures
+- preprocesses them with the current default blur and threshold
+- benchmarks both the TypeScript engine and the native WASM engine
+- records `generations/sec`
+- measures time to a shared quality target using a fixed seed
+- writes a machine-readable JSON report to `benchmarks/results/`
+
+The generated JSON reports are intentionally gitignored because they are local measurement artifacts, not source files.

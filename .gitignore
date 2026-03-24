@@ -1,6 +1,8 @@
 node_modules/
+.tmp/
 
 images/
+benchmarks/results/
 cpp/build/
 cpp/build-wasm/
 src/wasm/generated/stipplingEngine.js

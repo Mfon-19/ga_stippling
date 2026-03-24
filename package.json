@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "benchmark": "npm run build:wasm && ./scripts/run-benchmark.sh",
     "build:wasm": "./scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && tsc && vite build",
