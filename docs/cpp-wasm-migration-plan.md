@@ -84,22 +84,27 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - shared native engine surface added
    - native CLI stub added
    - native smoke test added
+4. Worker-owned target preparation
+   - preprocessing logic moved into a shared pure-data processor
+   - worker backend now prepares target rasters and image statistics
+   - UI now uses the worker path for preprocessing when available
+   - old canvas-bound preprocessing helper removed
 
 ### Current State
 
-- The browser app still uses the original main-thread TypeScript optimizer for actual evolution work.
-- The worker boundary exists and is typed, but it still needs to become the default runtime path for browser optimization.
+- The browser app now routes target preparation and optimization through the worker-backed TypeScript backend when the worker is available.
 - The native C++ engine exists as a documented scaffold, not yet as a feature-parity implementation.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
+- Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 
 ### Remaining High-Priority Work
 
-1. Make the worker boundary usable from the UI for real image/run orchestration.
-2. Replace the current worker stub behavior with a real backend adapter.
-3. Move preprocessing and target loading behind the worker/native boundary.
-4. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
-5. Implement incremental fitness in the native engine.
-6. Add multiscale optimization, stronger search heuristics, and reproducible benchmarking.
+1. Replace the worker TypeScript backend with a real C++/WASM adapter.
+2. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
+3. Implement incremental fitness in the native engine.
+4. Add deterministic RNG, metrics, benchmark reporting, and saved run configuration support.
+5. Add multiscale optimization and stronger search heuristics.
+6. Expand exports, CLI workflows, tests, and CI.
 
 ## Delivery Phases
 

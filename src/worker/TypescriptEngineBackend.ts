@@ -1,10 +1,13 @@
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
+import { RasterImageProcessor } from "../shared/RasterImageProcessor";
 import {
   EngineProgressEvent,
   EngineRunConfig,
   EngineSnapshotEvent,
   SerializedDot,
   SerializedImageBuffer,
+  TargetPreparedEvent,
+  TargetProcessingConfig,
 } from "../shared/engineProtocol";
 
 interface BackendCallbacks {
@@ -18,6 +21,7 @@ interface BackendCallbacks {
  * UI can move off the main thread before the C++ port is finished.
  */
 export class TypescriptEngineBackend {
+  private rasterProcessor = new RasterImageProcessor();
   private imageData: ImageData | null = null;
   private geneticAlgorithm: GeneticAlgorithm | null = null;
   private runId: string | null = null;
@@ -26,17 +30,37 @@ export class TypescriptEngineBackend {
   private lastSnapshotAt = 0;
   private currentConfig: EngineRunConfig | null = null;
 
-  public loadImage(image: SerializedImageBuffer): void {
+  public prepareTarget(
+    image: SerializedImageBuffer,
+    processing: TargetProcessingConfig,
+    requestId: string
+  ): TargetPreparedEvent {
     if (image.format !== "rgba8") {
       throw new Error(`Unsupported image format: ${image.format}`);
     }
 
     this.stop();
-    this.imageData = new ImageData(
+    const sourceImageData = new ImageData(
       new Uint8ClampedArray(image.pixels),
       image.width,
       image.height
     );
+    const result = this.rasterProcessor.preprocess(sourceImageData, processing);
+    this.imageData = result.imageData;
+    const serializedPixels = new Uint8ClampedArray(result.imageData.data);
+
+    return {
+      type: "target-prepared",
+      requestId,
+      status: "loaded",
+      image: {
+        width: result.imageData.width,
+        height: result.imageData.height,
+        format: "rgba8",
+        pixels: serializedPixels.buffer,
+      },
+      stats: result.stats,
+    };
   }
 
   public startRun(

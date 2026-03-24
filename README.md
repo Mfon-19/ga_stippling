@@ -96,9 +96,17 @@ src/
 ├── ui/             # User interface components
 │   ├── CanvasManager.ts # Canvas handling
 │   └── EventHandlers.ts # User interaction
+├── shared/         # Shared browser/worker protocol and image processing
+│   ├── engineProtocol.ts # Worker/WASM message contract
+│   └── RasterImageProcessor.ts # Pure pixel preprocessing pipeline
 ├── utils/          # Utility functions
-│   ├── config.ts   # Configuration constants
-│   └── ImageProcessor.ts # Image manipulation functions
+│   └── config.ts   # Configuration constants
+├── worker/         # Worker runtime and transitional TS backend
+│   ├── gaWorker.ts # Worker entrypoint
+│   └── TypescriptEngineBackend.ts # Off-main-thread fallback engine
+├── wasm/           # Browser-side engine client and module loader
+│   ├── WasmEngineClient.ts # Worker client wrapper
+│   └── engineModule.ts # Placeholder WASM loader
 └── main.ts         # Application entry point
 ```
 

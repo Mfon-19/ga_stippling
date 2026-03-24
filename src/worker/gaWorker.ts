@@ -34,16 +34,21 @@ async function handleCommand(command: EngineCommand): Promise<void> {
       case "init":
         await handleInitialize(command.requestId);
         return;
-      case "load-image":
+      case "prepare-target": {
         ensureInitialized();
-        state.backend?.loadImage(command.image);
+        const preparedTarget = state.backend?.prepareTarget(
+          command.image,
+          command.processing,
+          command.requestId
+        );
         state.status = "loaded";
-        postEvent({
-          type: "ack",
-          requestId: command.requestId,
-          status: state.status,
-        });
+        if (!preparedTarget) {
+          throw new Error("Worker backend failed to prepare the target image");
+        }
+        preparedTarget.status = state.status;
+        postEvent(preparedTarget, [preparedTarget.image.pixels]);
         return;
+      }
       case "start-run":
         ensureImageLoaded();
         state.backend?.startRun(command.runId, command.config, {

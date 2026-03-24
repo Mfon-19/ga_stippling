@@ -30,6 +30,19 @@ export interface SerializedImageBuffer {
   pixels: ArrayBuffer;
 }
 
+export interface TargetProcessingConfig {
+  blurAmount: number;
+  threshold: number;
+  maxDotCount: number;
+}
+
+export interface TargetStats {
+  blackPixels: number;
+  totalPixels: number;
+  blackPercentage: number;
+  recommendedDotCount: number;
+}
+
 export interface SerializedDot {
   x: number;
   y: number;
@@ -60,9 +73,10 @@ export interface InitializeEngineCommand extends BaseCommand {
   type: "init";
 }
 
-export interface LoadImageCommand extends BaseCommand {
-  type: "load-image";
+export interface PrepareTargetCommand extends BaseCommand {
+  type: "prepare-target";
   image: SerializedImageBuffer;
+  processing: TargetProcessingConfig;
 }
 
 export interface StartRunCommand extends BaseCommand {
@@ -94,7 +108,7 @@ export interface RequestStatusCommand extends BaseCommand {
 
 export type EngineCommand =
   | InitializeEngineCommand
-  | LoadImageCommand
+  | PrepareTargetCommand
   | StartRunCommand
   | PauseRunCommand
   | StopRunCommand
@@ -112,6 +126,14 @@ export interface EngineAckEvent {
   type: "ack";
   requestId: string;
   status: EngineStatus;
+}
+
+export interface TargetPreparedEvent {
+  type: "target-prepared";
+  requestId: string;
+  status: EngineStatus;
+  image: SerializedImageBuffer;
+  stats: TargetStats;
 }
 
 export interface EngineStatusEvent {
@@ -147,6 +169,7 @@ export interface EngineErrorEvent {
 export type EngineEvent =
   | EngineReadyEvent
   | EngineAckEvent
+  | TargetPreparedEvent
   | EngineStatusEvent
   | EngineProgressEvent
   | EngineSnapshotEvent

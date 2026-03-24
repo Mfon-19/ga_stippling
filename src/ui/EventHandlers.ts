@@ -1,5 +1,4 @@
 import { CanvasManager } from "./CanvasManager";
-import { ImageProcessor } from "../utils/ImageProcessor";
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { CONFIG } from "../utils/config";
 import {
@@ -7,7 +6,11 @@ import {
   EngineRunConfig,
   EngineSnapshotEvent,
   SerializedDot,
+  SerializedImageBuffer,
+  TargetPreparedEvent,
+  TargetProcessingConfig,
 } from "../shared/engineProtocol";
+import { RasterImageProcessor } from "../shared/RasterImageProcessor";
 import { WasmEngineClient } from "../wasm/WasmEngineClient";
 
 export interface UIElements {
@@ -29,19 +32,19 @@ export interface ProcessingState {
   generations: number;
   recommendedDotCount: number;
   workerRunId: string | null;
+  processingVersion: number;
   animationFrameId?: number;
 }
 
 export class EventHandlers {
   private canvasManager: CanvasManager;
-  private imageProcessor: ImageProcessor;
+  private rasterProcessor = new RasterImageProcessor();
   private engineClient: WasmEngineClient | null = null;
   private elements: UIElements;
   private state: ProcessingState;
 
   constructor(canvasManager: CanvasManager, elements: UIElements) {
     this.canvasManager = canvasManager;
-    this.imageProcessor = new ImageProcessor(0, 0);
     this.elements = elements;
     this.state = {
       currentImage: null,
@@ -50,6 +53,7 @@ export class EventHandlers {
       generations: 0,
       recommendedDotCount: 0,
       workerRunId: null,
+      processingVersion: 0,
     };
 
     this.initializeEventListeners();
@@ -71,7 +75,7 @@ export class EventHandlers {
     this.engineClient.onSnapshot = this.handleWorkerSnapshot;
 
     if (this.state.currentImage && !this.state.isEvolutionRunning) {
-      void this.syncWorkerWithCurrentTarget();
+      void this.processImage();
     }
   }
 
@@ -121,12 +125,11 @@ export class EventHandlers {
       this.state.currentImage = image;
 
       this.canvasManager.resizeCanvases(image.width, image.height);
-      this.imageProcessor.resize(image.width, image.height);
 
       const imgCtx = this.canvasManager.getImageContext();
       imgCtx.drawImage(image, 0, 0);
 
-      this.processImage();
+      void this.processImage();
     } catch (error) {
       console.error("Error loading image:", error);
     }
@@ -156,7 +159,7 @@ export class EventHandlers {
   private handleBlurChange(event: Event): void {
     const value = parseInt((event.target as HTMLInputElement).value);
     this.elements.blurValueDisplay.textContent = value.toString();
-    this.processImage();
+    void this.processImage();
   }
 
   /**
@@ -165,7 +168,7 @@ export class EventHandlers {
   private handleThresholdChange(event: Event): void {
     const value = parseInt((event.target as HTMLInputElement).value);
     this.elements.thresholdValueDisplay.textContent = value.toString();
-    this.processImage();
+    void this.processImage();
   }
 
   /**
@@ -180,29 +183,46 @@ export class EventHandlers {
   /**
    * Processes the current image with current settings
    */
-  private processImage(): void {
-    if (!this.state.currentImage) return;
+  private async processImage(): Promise<void> {
+    if (!this.state.currentImage) {
+      return;
+    }
 
-    const blurAmount = parseInt(this.elements.blurSlider.value);
-    const threshold = parseInt(this.elements.thresholdSlider.value);
+    const processingVersion = ++this.state.processingVersion;
+    const sourceImage = this.getSourceImageData();
+    const processingConfig = this.getProcessingConfig();
 
-    const processedImageData = this.imageProcessor.convertToBlackAndWhite(
-      this.canvasManager.getImageContext(),
-      blurAmount,
-      threshold
-    );
+    try {
+      if (this.engineClient) {
+        const preparedTarget = await this.engineClient.prepareTarget(
+          this.serializeImageData(sourceImage),
+          processingConfig
+        );
 
-    const bwCtx = this.canvasManager.getBWContext();
-    bwCtx.putImageData(processedImageData, 0, 0);
+        if (processingVersion !== this.state.processingVersion) {
+          return;
+        }
 
-    const stats = this.imageProcessor.calculateImageStats(processedImageData);
-    this.state.recommendedDotCount = stats.recommendedDotCount;
+        this.applyPreparedTarget(preparedTarget);
+        return;
+      }
 
-    this.elements.dotCountElement.style.display = "block";
-    this.elements.dotCountInput.style.display = "block";
+      const result = this.rasterProcessor.preprocess(sourceImage, processingConfig);
 
-    this.updateDotCountDisplay();
-    void this.syncWorkerImage(processedImageData);
+      if (processingVersion !== this.state.processingVersion) {
+        return;
+      }
+
+      this.applyPreparedTarget({
+        type: "target-prepared",
+        requestId: `local-${processingVersion}`,
+        status: "loaded",
+        image: this.serializeImageData(result.imageData),
+        stats: result.stats,
+      });
+    } catch (error) {
+      console.error("Error processing image:", error);
+    }
   }
 
   /**
@@ -350,7 +370,7 @@ export class EventHandlers {
     }
 
     try {
-      await this.syncWorkerWithCurrentTarget();
+      await this.processImage();
 
       const runId = `run-${Date.now()}`;
       this.state.workerRunId = runId;
@@ -367,35 +387,52 @@ export class EventHandlers {
     }
   }
 
-  private async syncWorkerWithCurrentTarget(): Promise<void> {
-    if (!this.state.currentImage) {
-      return;
+  private getSourceImageData(): ImageData {
+    const currentImage = this.state.currentImage;
+    if (!currentImage) {
+      throw new Error("No image is loaded");
     }
 
-    const bwCtx = this.canvasManager.getBWContext();
-    const imageData = bwCtx.getImageData(
+    return this.canvasManager.getImageContext().getImageData(
       0,
       0,
-      this.state.currentImage.width,
-      this.state.currentImage.height
+      currentImage.width,
+      currentImage.height
     );
-
-    await this.syncWorkerImage(imageData);
   }
 
-  private async syncWorkerImage(imageData: ImageData): Promise<void> {
-    if (!this.engineClient || this.state.isEvolutionRunning) {
-      return;
-    }
+  private getProcessingConfig(): TargetProcessingConfig {
+    return {
+      blurAmount: parseInt(this.elements.blurSlider.value),
+      threshold: parseInt(this.elements.thresholdSlider.value),
+      maxDotCount: CONFIG.IMAGE.MAX_DOT_COUNT,
+    };
+  }
 
+  private applyPreparedTarget(preparedTarget: TargetPreparedEvent): void {
+    const bwCtx = this.canvasManager.getBWContext();
+    const processedImageData = new ImageData(
+      new Uint8ClampedArray(preparedTarget.image.pixels),
+      preparedTarget.image.width,
+      preparedTarget.image.height
+    );
+    bwCtx.putImageData(processedImageData, 0, 0);
+
+    this.state.recommendedDotCount = preparedTarget.stats.recommendedDotCount;
+    this.elements.dotCountElement.style.display = "block";
+    this.elements.dotCountInput.style.display = "block";
+    this.updateDotCountDisplay();
+  }
+
+  private serializeImageData(imageData: ImageData): SerializedImageBuffer {
     const pixelCopy = new Uint8ClampedArray(imageData.data);
 
-    await this.engineClient.loadImage({
+    return {
       width: imageData.width,
       height: imageData.height,
       format: "rgba8",
       pixels: pixelCopy.buffer,
-    });
+    };
   }
 
   private handleWorkerProgress = (event: EngineProgressEvent): void => {

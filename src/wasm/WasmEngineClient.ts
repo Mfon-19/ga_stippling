@@ -1,5 +1,4 @@
 import {
-  EngineAckEvent,
   EngineCommand,
   EngineEvent,
   EngineProgressEvent,
@@ -8,6 +7,9 @@ import {
   EngineSnapshotEvent,
   EngineStatusEvent,
   SerializedImageBuffer,
+  TargetPreparedEvent,
+  TargetProcessingConfig,
+  EngineAckEvent,
 } from "../shared/engineProtocol";
 
 interface PendingRequest {
@@ -50,12 +52,16 @@ export class WasmEngineClient {
     });
   }
 
-  public loadImage(image: SerializedImageBuffer): Promise<EngineAckEvent> {
-    return this.sendCommand<EngineAckEvent>(
+  public prepareTarget(
+    image: SerializedImageBuffer,
+    processing: TargetProcessingConfig
+  ): Promise<TargetPreparedEvent> {
+    return this.sendCommand<TargetPreparedEvent>(
       {
-        type: "load-image",
-        requestId: this.nextRequestId("image"),
+        type: "prepare-target",
+        requestId: this.nextRequestId("target"),
         image,
+        processing,
       },
       [image.pixels]
     );
