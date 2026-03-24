@@ -11,6 +11,7 @@ import {
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
 import { RasterImageProcessor } from "../shared/RasterImageProcessor";
+import { createSeededRandomSource } from "../shared/random";
 import { WasmEngineClient } from "../wasm/WasmEngineClient";
 
 export interface UIElements {
@@ -33,6 +34,9 @@ export interface ProcessingState {
   recommendedDotCount: number;
   workerRunId: string | null;
   processingVersion: number;
+  activeSeed: number | null;
+  bestFitness: number | null;
+  generationsPerSecond: number | null;
   animationFrameId?: number;
 }
 
@@ -54,6 +58,9 @@ export class EventHandlers {
       recommendedDotCount: 0,
       workerRunId: null,
       processingVersion: 0,
+      activeSeed: null,
+      bestFitness: null,
+      generationsPerSecond: null,
     };
 
     this.initializeEventListeners();
@@ -233,7 +240,14 @@ export class EventHandlers {
       `Recommended dot count: ${this.state.recommendedDotCount}` +
       (this.state.generations
         ? `. Generations: ${this.state.generations}`
-        : "");
+        : "") +
+      (this.state.generationsPerSecond !== null
+        ? `. Speed: ${this.state.generationsPerSecond.toFixed(1)} gen/s`
+        : "") +
+      (this.state.bestFitness !== null
+        ? `. Fitness: ${this.state.bestFitness.toFixed(4)}`
+        : "") +
+      (this.state.activeSeed !== null ? `. Seed: ${this.state.activeSeed}` : "");
     this.elements.dotCountInput.value =
       this.state.recommendedDotCount.toString();
   }
@@ -264,11 +278,15 @@ export class EventHandlers {
       mutationRate: runConfig.mutationRate,
       dotCount: runConfig.dotCount,
       elitismRatio: runConfig.elitismRatio,
+      random: createSeededRandomSource(runConfig.seed),
     });
 
     this.state.isEvolutionRunning = true;
     this.state.workerRunId = null;
     this.state.generations = 0;
+    this.state.activeSeed = runConfig.seed;
+    this.state.bestFitness = null;
+    this.state.generationsPerSecond = null;
     this.updateUIState(true);
     this.startEvolutionLoop();
   }
@@ -307,6 +325,8 @@ export class EventHandlers {
     if (this.state.animationFrameId) {
       cancelAnimationFrame(this.state.animationFrameId);
     }
+    this.state.bestFitness = null;
+    this.state.generationsPerSecond = null;
     if (this.engineClient && this.state.workerRunId) {
       const runId = this.state.workerRunId;
       this.state.workerRunId = null;
@@ -359,6 +379,7 @@ export class EventHandlers {
       seed: Date.now() >>> 0,
       generationsPerBatch: 1,
       previewIntervalMs: 100,
+      benchmarkMode: false,
     };
   }
 
@@ -377,6 +398,9 @@ export class EventHandlers {
       this.state.geneticAlgorithm = null;
       this.state.isEvolutionRunning = true;
       this.state.generations = 0;
+      this.state.activeSeed = runConfig.seed;
+      this.state.bestFitness = null;
+      this.state.generationsPerSecond = null;
       this.updateUIState(true);
       await this.engineClient.startRun(runId, runConfig);
     } catch (error) {
@@ -441,6 +465,9 @@ export class EventHandlers {
     }
 
     this.state.generations = event.generation;
+    this.state.activeSeed = event.metrics.seed;
+    this.state.bestFitness = event.metrics.bestFitness;
+    this.state.generationsPerSecond = event.metrics.generationsPerSecond;
     this.updateDotCountDisplay();
   };
 

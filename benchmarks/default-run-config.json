@@ -1,0 +1,10 @@
+{
+  "populationSize": 100,
+  "mutationRate": 0.2,
+  "dotCount": 20000,
+  "elitismRatio": 0.7,
+  "seed": 1337,
+  "generationsPerBatch": 1,
+  "previewIntervalMs": 100,
+  "benchmarkMode": true
+}

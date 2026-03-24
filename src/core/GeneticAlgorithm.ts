@@ -1,28 +1,33 @@
 import { Population, PopulationConfig } from "./Population";
 import { Individual } from "./Individual";
 import { Dot } from "./Dot";
+import { MathRandomSource, RandomSource } from "../shared/random";
 
 export interface GeneticAlgorithmConfig {
   populationSize: number;
   mutationRate: number;
   dotCount: number;
   elitismRatio: number;
+  random?: RandomSource;
 }
 
 export class GeneticAlgorithm {
   private population: Population;
   private config: GeneticAlgorithmConfig;
   private target: ImageData;
+  private random: RandomSource;
 
   constructor(target: ImageData, config: GeneticAlgorithmConfig) {
     this.target = target;
     this.config = config;
+    this.random = config.random ?? new MathRandomSource();
 
     const popConfig: PopulationConfig = {
       size: config.populationSize,
       width: target.width,
       height: target.height,
       dotCount: config.dotCount,
+      random: this.random,
     };
 
     this.population = new Population(popConfig, target);
@@ -75,7 +80,7 @@ export class GeneticAlgorithm {
     );
 
     const selectParent = () => {
-      let threshold = Math.random() * totalFitness;
+      let threshold = this.random.next() * totalFitness;
       let sum = 0;
 
       for (const individual of this.population.population) {
@@ -101,7 +106,8 @@ export class GeneticAlgorithm {
     const child = new Individual(
       this.target.width,
       this.target.height,
-      parent1.dots.length
+      parent1.dots.length,
+      this.random
     );
 
     for (let i = 0; i < parent1.dots.length; i++) {

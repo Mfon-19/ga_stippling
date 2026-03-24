@@ -1,11 +1,13 @@
 import { Individual } from "./Individual";
 import { Dot } from "./Dot";
+import { RandomSource } from "../shared/random";
 
 export interface PopulationConfig {
   size: number;
   width: number;
   height: number;
   dotCount: number;
+  random: RandomSource;
 }
 
 export class Population {
@@ -27,7 +29,13 @@ export class Population {
   private initializePopulation(config: PopulationConfig): Individual[] {
     return Array.from(
       { length: config.size },
-      () => new Individual(config.width, config.height, config.dotCount)
+      () =>
+        new Individual(
+          config.width,
+          config.height,
+          config.dotCount,
+          config.random
+        )
     );
   }
 

@@ -89,6 +89,11 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - worker backend now prepares target rasters and image statistics
    - UI now uses the worker path for preprocessing when available
    - old canvas-bound preprocessing helper removed
+5. Deterministic runs and progress metrics
+   - seeded randomness added to the TypeScript GA path
+   - worker progress events now include timing and throughput metrics
+   - UI now surfaces seed, fitness, and generation speed
+   - default benchmark run configuration added under `benchmarks/`
 
 ### Current State
 
@@ -102,7 +107,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 1. Replace the worker TypeScript backend with a real C++/WASM adapter.
 2. Port the optimization core to C++/WASM instead of relying on the TypeScript fallback path.
 3. Implement incremental fitness in the native engine.
-4. Add deterministic RNG, metrics, benchmark reporting, and saved run configuration support.
+4. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
 5. Add multiscale optimization and stronger search heuristics.
 6. Expand exports, CLI workflows, tests, and CI.
 

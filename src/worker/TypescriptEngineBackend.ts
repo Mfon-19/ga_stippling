@@ -1,6 +1,8 @@
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { RasterImageProcessor } from "../shared/RasterImageProcessor";
+import { createSeededRandomSource } from "../shared/random";
 import {
+  EngineRunMetrics,
   EngineProgressEvent,
   EngineRunConfig,
   EngineSnapshotEvent,
@@ -29,6 +31,8 @@ export class TypescriptEngineBackend {
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSnapshotAt = 0;
   private currentConfig: EngineRunConfig | null = null;
+  private startedAt = 0;
+  private currentSeed = 0;
 
   public prepareTarget(
     image: SerializedImageBuffer,
@@ -77,11 +81,14 @@ export class TypescriptEngineBackend {
     this.generation = 0;
     this.lastSnapshotAt = 0;
     this.currentConfig = config;
+    this.startedAt = performance.now();
+    this.currentSeed = config.seed;
     this.geneticAlgorithm = new GeneticAlgorithm(this.imageData, {
       populationSize: config.populationSize,
       mutationRate: config.mutationRate,
       dotCount: config.dotCount,
       elitismRatio: config.elitismRatio,
+      random: createSeededRandomSource(config.seed),
     });
 
     this.scheduleNextBatch(callbacks);
@@ -100,6 +107,7 @@ export class TypescriptEngineBackend {
     this.runId = null;
     this.generation = 0;
     this.currentConfig = null;
+    this.startedAt = 0;
   }
 
   public hasImage(): boolean {
@@ -140,12 +148,15 @@ export class TypescriptEngineBackend {
         return;
       }
 
+      const batchStartedAt = performance.now();
       for (let i = 0; i < this.currentConfig.generationsPerBatch; i++) {
         this.geneticAlgorithm.evolve();
         this.generation++;
       }
+      const batchDurationMs = performance.now() - batchStartedAt;
 
       const { bestFitness } = this.getBestIndividualMetrics();
+      const metrics = this.createRunMetrics(bestFitness, batchDurationMs);
 
       callbacks.onProgress({
         type: "progress",
@@ -153,6 +164,7 @@ export class TypescriptEngineBackend {
         generation: this.generation,
         bestFitness,
         status: "running",
+        metrics,
       });
 
       const now = performance.now();
@@ -194,6 +206,33 @@ export class TypescriptEngineBackend {
     const fittestIndex = population.getFittestIndex();
     return {
       bestFitness: population.population[fittestIndex].fitness,
+    };
+  }
+
+  private createRunMetrics(
+    bestFitness: number,
+    batchDurationMs: number
+  ): EngineRunMetrics {
+    const elapsedMs = Math.max(performance.now() - this.startedAt, 0);
+    const performanceWithMemory = performance as Performance & {
+      memory?: { usedJSHeapSize?: number };
+    };
+    const generationsPerSecond =
+      batchDurationMs > 0
+        ? (this.currentConfig?.generationsPerBatch ?? 0) / (batchDurationMs / 1000)
+        : 0;
+    const usedHeapBytes =
+      typeof performanceWithMemory.memory?.usedJSHeapSize === "number"
+        ? performanceWithMemory.memory.usedJSHeapSize
+        : undefined;
+
+    return {
+      seed: this.currentSeed,
+      elapsedMs,
+      batchDurationMs,
+      generationsPerSecond,
+      bestFitness,
+      usedHeapBytes,
     };
   }
 }

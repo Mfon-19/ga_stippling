@@ -57,12 +57,22 @@ export interface EngineRunConfig {
   seed: number;
   generationsPerBatch: number;
   previewIntervalMs: number;
+  benchmarkMode?: boolean;
 }
 
 export interface EngineSnapshot {
   generation: number;
   dots?: SerializedDot[];
   raster?: ArrayBuffer;
+}
+
+export interface EngineRunMetrics {
+  seed: number;
+  elapsedMs: number;
+  batchDurationMs: number;
+  generationsPerSecond: number;
+  bestFitness: number;
+  usedHeapBytes?: number;
 }
 
 interface BaseCommand {
@@ -150,6 +160,7 @@ export interface EngineProgressEvent {
   generation: number;
   bestFitness: number;
   status: EngineStatus;
+  metrics: EngineRunMetrics;
 }
 
 export interface EngineSnapshotEvent {
