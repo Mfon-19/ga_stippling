@@ -51,6 +51,12 @@ int main() {
   assert(stippling_engine_evolve_batch(engine, &evolved) == 0);
   assert(evolved.generation == 1);
   assert(evolved.best_squared_error >= 0);
+  const size_t best_dot_count = stippling_engine_best_dot_count(engine);
+  assert(best_dot_count == 2048);
+  std::vector<StipplingDot> best_dots(best_dot_count);
+  assert(stippling_engine_copy_best_dots(engine, best_dots.data(), best_dots.size()) ==
+         best_dot_count);
+  assert(best_dots.front().radius > 0.0);
 
   stippling_engine_destroy(engine);
   return 0;

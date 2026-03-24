@@ -79,6 +79,14 @@ StipplingOptimizerProgress to_c_progress(
   };
 }
 
+StipplingDot to_c_dot(const stippling::Dot& dot) {
+  return {
+      .x = dot.x,
+      .y = dot.y,
+      .radius = dot.radius,
+  };
+}
+
 template <typename Callback>
 int with_error_boundary(StipplingEngine* engine, Callback&& callback) {
   if (engine == nullptr) {
@@ -145,6 +153,31 @@ int stippling_engine_evolve_batch(StipplingEngine* engine,
   return with_error_boundary(engine, [&]() {
     *progress = to_c_progress(engine->engine.evolve_batch());
   });
+}
+
+size_t stippling_engine_best_dot_count(const StipplingEngine* engine) {
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  return engine->engine.best_dots().size();
+}
+
+size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
+                                       StipplingDot* output,
+                                       size_t capacity) {
+  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer()) {
+    return 0;
+  }
+
+  const auto& dots = engine->engine.best_dots();
+  const auto count = std::min<std::size_t>(capacity, dots.size());
+
+  for (std::size_t index = 0; index < count; ++index) {
+    output[index] = to_c_dot(dots[index]);
+  }
+
+  return count;
 }
 
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine) {

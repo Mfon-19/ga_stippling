@@ -36,6 +36,12 @@ typedef struct StipplingTargetStats {
   uint32_t recommended_dot_count;
 } StipplingTargetStats;
 
+typedef struct StipplingDot {
+  double x;
+  double y;
+  double radius;
+} StipplingDot;
+
 typedef struct StipplingOptimizerProgress {
   uint32_t generation;
   double best_fitness;
@@ -62,6 +68,10 @@ int stippling_engine_prepare_target(
 int stippling_engine_initialize_optimizer(StipplingEngine* engine);
 int stippling_engine_evolve_batch(StipplingEngine* engine,
                                   StipplingOptimizerProgress* progress);
+size_t stippling_engine_best_dot_count(const StipplingEngine* engine);
+size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
+                                       StipplingDot* output,
+                                       size_t capacity);
 
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine);
 StipplingOptimizerProgress stippling_engine_optimizer_progress(

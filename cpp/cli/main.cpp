@@ -35,6 +35,7 @@ int main() {
   std::cout << "generation=" << progress.generation << '\n';
   std::cout << "best_fitness=" << progress.best_fitness << '\n';
   std::cout << "best_squared_error=" << progress.best_squared_error << '\n';
+  std::cout << "best_dot_count=" << engine.best_dots().size() << '\n';
   std::cout << "incremental_fitness="
             << engine.capabilities().incremental_fitness << '\n';
   std::cout << "multiscale=" << engine.capabilities().multiscale << '\n';
