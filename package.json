@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "benchmark": "npm run build:wasm && ./scripts/run-benchmark.sh",
+    "benchmark:compare": "node ./scripts/compare-benchmarks.mjs",
+    "benchmark:fixtures": "npm run build:wasm && ./scripts/run-benchmark.sh fixtures/regression/cross.pgm fixtures/regression/bands.ppm",
     "build:wasm": "./scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && tsc && vite build",
+    "parity:check": "npm run build:wasm && cmake -S cpp -B cpp/build && cmake --build cpp/build --target stippling_cli && ./scripts/run-parity.sh",
     "preview": "vite preview"
   },
   "devDependencies": {

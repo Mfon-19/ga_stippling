@@ -132,6 +132,24 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - native initialization now seeds most dots from darkness-weighted target locations instead of uniform random placement
    - parent selection now uses tournament selection instead of roulette selection
    - mutation now adapts to stagnation and prefers local refinement before full reseeding
+16. Native export and CLI workflows
+   - native engine can now export current best results as SVG and PNG
+   - CLI now supports `run`, `batch`, and `benchmark` commands on Netpbm fixtures
+   - CLI reports now include quality metrics, validation output, and optional best-dot snapshots
+   - CLI can emit SVG, PNG, report JSON, and animated-SVG timelapse artifacts
+17. Browser/WASM artifact export
+   - worker protocol now supports export-artifact requests for SVG, PNG, and timelapse SVG output
+   - WASM wrapper now exposes native export functions through the browser worker boundary
+   - worker backend now captures timelapse frames during optimization so exported animations come from actual run history
+18. Fixture-based regression and benchmark tooling
+   - tracked Netpbm fixtures added under `fixtures/regression/`
+   - fixture smoke benchmarks now record MSE, RMSE, PSNR, and exact-pixel-ratio in addition to fitness
+   - native CLI vs WASM parity script now compares best-dot snapshots plus SVG and PNG exports
+   - benchmark comparison script added for report-to-report delta tracking
+19. CI regression expansion
+   - CI now runs fixture benchmark smoke tests
+   - CI now runs native/WASM parity validation on tracked fixtures
+   - incremental-fitness validation is exercised through the CLI parity path using `--validate`
 
 ### Current State
 
@@ -141,17 +159,19 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The native optimizer now performs incremental raster/error updates during crossover and mutation instead of recomputing every child from a full redraw.
 - The native search loop is no longer purely naive: it now uses guided seeding, tournament-style selection, and adaptive mutation pressure when progress stalls.
 - The native CLI, C ABI, and browser worker can all read best-dot snapshots from the same engine surface.
+- The native export surface now supports SVG and PNG output, and both the CLI and the browser worker build on that same surface.
+- Fixture-based smoke benchmarks, report comparison tooling, and native/WASM parity validation are now in place.
 - Basic CI now validates the current browser and native codepaths on every push and pull request.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 
 ### Remaining High-Priority Work
 
-1. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
-2. Add multiscale optimization and stronger search heuristics.
-3. Replace the current threshold-only target preparation with richer preprocessing and importance maps.
-4. Expand exports, CLI workflows, tests, and CI.
-5. Add browser/native regression fixtures that prove WASM snapshots stay aligned with CLI snapshots.
+1. Add multiscale optimization and stronger search heuristics.
+2. Replace the current threshold-only target preparation with richer preprocessing and importance maps.
+3. Expand exports beyond current SVG/PNG/animated-SVG support into richer batch pipelines and possibly raster video output.
+4. Add explicit browser UI controls for the new export capabilities.
+5. Deepen regression coverage with more fixture families and quality thresholds over time.
 
 ## Delivery Phases
 

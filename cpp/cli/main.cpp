@@ -265,6 +265,7 @@ void write_optional_text(const std::optional<fs::path>& path, const std::string&
 
 std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
   std::ostringstream stream;
+  stream << std::fixed << std::setprecision(12);
   stream << '[';
   for (std::size_t index = 0; index < dots.size(); ++index) {
     if (index > 0) {
@@ -279,7 +280,7 @@ std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
 
 std::string report_to_json(const RunResult& result) {
   std::ostringstream stream;
-  stream << std::fixed << std::setprecision(6);
+  stream << std::fixed << std::setprecision(12);
   stream << "{";
   stream << "\"input\":\"" << json_escape(result.input_path.string()) << "\",";
   stream << "\"image\":{\"width\":" << result.width << ",\"height\":" << result.height

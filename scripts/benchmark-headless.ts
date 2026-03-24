@@ -1,44 +1,25 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { GeneticAlgorithm } from "../src/core/GeneticAlgorithm";
 import { RasterImageProcessor } from "../src/shared/RasterImageProcessor";
 import {
   EngineRunConfig,
+  SerializedDot,
   SerializedImageBuffer,
   TargetProcessingConfig,
 } from "../src/shared/engineProtocol";
 import { createSeededRandomSource } from "../src/shared/random";
 import { CONFIG } from "../src/utils/config";
 import { loadEngineModule } from "../src/wasm/engineModule";
+import {
+  DecodedFixture,
+  NodeImageData,
+  decodeImageFile,
+  installNodeImageData,
+} from "./imageDecode";
 
-class NodeImageData {
-  public readonly data: Uint8ClampedArray;
-  public readonly width: number;
-  public readonly height: number;
-
-  constructor(data: Uint8ClampedArray, width: number, height: number) {
-    if (data.length !== width * height * 4) {
-      throw new Error(
-        `ImageData length ${data.length} does not match ${width}x${height}`
-      );
-    }
-
-    this.data = data;
-    this.width = width;
-    this.height = height;
-  }
-}
-
-type ImageDataLike = InstanceType<typeof NodeImageData>;
-
-interface DecodedFixture {
-  name: string;
-  imagePath: string;
-  imageData: ImageDataLike;
-}
+type ImageDataLike = NodeImageData;
 
 interface TargetFixture {
   name: string;
@@ -58,6 +39,13 @@ interface GenerationSample {
   bestFitness: number;
 }
 
+interface QualityMetrics {
+  mse: number;
+  rmse: number;
+  psnr: number;
+  exactPixelRatio: number;
+}
+
 interface BackendRunResult {
   backend: "typescript" | "wasm";
   generations: number;
@@ -65,6 +53,8 @@ interface BackendRunResult {
   generationsPerSecond: number;
   finalFitness: number;
   history: GenerationSample[];
+  bestDots: SerializedDot[];
+  quality: QualityMetrics;
   usedHeapBytes?: number;
 }
 
@@ -88,6 +78,7 @@ interface BackendSummary {
   finalFitness: number;
   timeToTargetMs: number;
   generationAtTarget: number;
+  quality: QualityMetrics;
   usedHeapBytes?: number;
 }
 
@@ -100,16 +91,9 @@ interface JsonReport {
   images: BenchmarkResult[];
 }
 
-const GLOBAL_SCOPE = globalThis as typeof globalThis & {
-  ImageData?: typeof NodeImageData;
-};
-
-if (!GLOBAL_SCOPE.ImageData) {
-  GLOBAL_SCOPE.ImageData = NodeImageData;
-}
+installNodeImageData();
 
 const REPO_ROOT = process.cwd();
-const FIXTURE_NAMES = ["jobs.jpeg", "landscape.avif"];
 const BENCHMARK_SEED = 1337;
 const PROCESSING_CONFIG: TargetProcessingConfig = {
   blurAmount: CONFIG.IMAGE.DEFAULT_BLUR,
@@ -132,34 +116,95 @@ function serializeImageData(imageData: ImageDataLike): SerializedImageBuffer {
   };
 }
 
-function decodeFixtureImage(imagePath: string): DecodedFixture {
-  const tempDirectory = mkdtempSync(path.join(tmpdir(), "stippling-benchmark-"));
-  const outputPath = path.join(tempDirectory, `${path.basename(imagePath)}.rgba`);
-
-  try {
-    const stdout = execFileSync(
-      "swift",
-      [path.join(REPO_ROOT, "scripts", "decode-image.swift"), imagePath, outputPath],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-      }
-    );
-    const payload = JSON.parse(stdout) as {
-      width: number;
-      height: number;
-      output: string;
-    };
-    const pixels = Uint8ClampedArray.from(readFileSync(payload.output));
-
-    return {
-      name: path.basename(imagePath),
-      imagePath,
-      imageData: new NodeImageData(pixels, payload.width, payload.height),
-    };
-  } finally {
-    rmSync(tempDirectory, { recursive: true, force: true });
+function drawHorizontalLine(
+  grid: Uint8Array,
+  width: number,
+  height: number,
+  y: number,
+  startX: number,
+  endX: number
+): void {
+  if (y < 0 || y >= height) {
+    return;
   }
+
+  const clampedStart = Math.max(0, startX);
+  const clampedEnd = Math.min(width - 1, endX);
+
+  for (let x = clampedStart; x <= clampedEnd; x += 1) {
+    grid[y * width + x] = 0;
+  }
+}
+
+function renderDotsToGrayscale(
+  dots: SerializedDot[],
+  width: number,
+  height: number
+): Uint8Array {
+  const grid = new Uint8Array(width * height).fill(255);
+
+  for (const dot of dots) {
+    const centerX = Math.floor(dot.x);
+    const centerY = Math.floor(dot.y);
+    const radius = Math.floor(dot.radius);
+
+    if (radius < 0) {
+      continue;
+    }
+
+    let x = 0;
+    let y = radius;
+    let decision = 1 - radius;
+
+    drawHorizontalLine(grid, width, height, centerY, centerX - radius, centerX + radius);
+
+    while (y > x) {
+      if (decision < 0) {
+        decision += 2 * x + 3;
+      } else {
+        decision += 2 * (x - y) + 5;
+        y -= 1;
+      }
+      x += 1;
+
+      drawHorizontalLine(grid, width, height, centerY + y, centerX - x, centerX + x);
+      drawHorizontalLine(grid, width, height, centerY - y, centerX - x, centerX + x);
+      drawHorizontalLine(grid, width, height, centerY + x, centerX - y, centerX + y);
+      drawHorizontalLine(grid, width, height, centerY - x, centerX - y, centerX + y);
+    }
+  }
+
+  return grid;
+}
+
+function computeQualityMetrics(
+  targetImage: ImageDataLike,
+  bestDots: SerializedDot[]
+): QualityMetrics {
+  const rendered = renderDotsToGrayscale(bestDots, targetImage.width, targetImage.height);
+  let squaredError = 0;
+  let exactMatches = 0;
+
+  for (let index = 0; index < rendered.length; index += 1) {
+    const target = targetImage.data[index * 4];
+    const diff = rendered[index] - target;
+    squaredError += diff * diff;
+    if (rendered[index] === target) {
+      exactMatches += 1;
+    }
+  }
+
+  const mse = squaredError / rendered.length;
+  const rmse = Math.sqrt(mse);
+  const psnr =
+    mse === 0 ? Number.POSITIVE_INFINITY : 20 * Math.log10(255) - 10 * Math.log10(mse);
+
+  return {
+    mse,
+    rmse,
+    psnr,
+    exactPixelRatio: exactMatches / rendered.length,
+  };
 }
 
 function prepareTargetFixture(decodedFixture: DecodedFixture): TargetFixture {
@@ -226,6 +271,7 @@ function summarizeBackendRun(
       finalFitness: run.finalFitness,
       timeToTargetMs: targetSample.elapsedMs,
       generationAtTarget: targetSample.generation,
+      quality: run.quality,
       usedHeapBytes: run.usedHeapBytes,
     };
   });
@@ -242,6 +288,14 @@ function summarizeBackendRun(
     generationAtTarget: medianInteger(
       summaryInputs.map((input) => input.generationAtTarget)
     ),
+    quality: {
+      mse: median(summaryInputs.map((input) => input.quality.mse)),
+      rmse: median(summaryInputs.map((input) => input.quality.rmse)),
+      psnr: median(summaryInputs.map((input) => input.quality.psnr)),
+      exactPixelRatio: median(
+        summaryInputs.map((input) => input.quality.exactPixelRatio)
+      ),
+    },
     usedHeapBytes: medianOptionalInteger(
       summaryInputs.map((input) => input.usedHeapBytes)
     ),
@@ -304,6 +358,13 @@ function runTypescriptGenerations(
   }
 
   const elapsedMs = history[history.length - 1]?.elapsedMs ?? 0;
+  const population = algorithm.getPopulation();
+  const fittestIndex = population.getFittestIndex();
+  const bestDots = population.population[fittestIndex].dots.map((dot) => ({
+    x: dot.x,
+    y: dot.y,
+    radius: dot.radius,
+  }));
 
   return {
     backend: "typescript",
@@ -312,6 +373,8 @@ function runTypescriptGenerations(
     generationsPerSecond: elapsedMs > 0 ? generations / (elapsedMs / 1000) : 0,
     finalFitness: history[history.length - 1]?.bestFitness ?? 0,
     history,
+    bestDots,
+    quality: computeQualityMetrics(fixture.processedImage, bestDots),
   };
 }
 
@@ -349,6 +412,7 @@ async function runWasmGenerations(
     }
 
     const elapsedMs = history[history.length - 1]?.elapsedMs ?? 0;
+    const bestDots = engine.getBestDots();
 
     return {
       backend: "wasm",
@@ -357,6 +421,8 @@ async function runWasmGenerations(
       generationsPerSecond: elapsedMs > 0 ? generations / (elapsedMs / 1000) : 0,
       finalFitness: history[history.length - 1]?.bestFitness ?? 0,
       history,
+      bestDots,
+      quality: computeQualityMetrics(fixture.processedImage, bestDots),
       usedHeapBytes: engine.heapByteLength(),
     };
   } finally {
@@ -445,6 +511,7 @@ function printReport(reportPath: string, report: JsonReport): void {
         `timeToTarget=${result.typescript.timeToTargetMs.toFixed(1)} ms`,
         `targetGen=${result.typescript.generationAtTarget}`,
         `finalFitness=${result.typescript.finalFitness.toFixed(4)}`,
+        `mse=${result.typescript.quality.mse.toFixed(1)}`,
       ].join(" | ")
     );
     console.log(
@@ -453,6 +520,7 @@ function printReport(reportPath: string, report: JsonReport): void {
         `timeToTarget=${result.wasm.timeToTargetMs.toFixed(1)} ms`,
         `targetGen=${result.wasm.generationAtTarget}`,
         `finalFitness=${result.wasm.finalFitness.toFixed(4)}`,
+        `mse=${result.wasm.quality.mse.toFixed(1)}`,
       ].join(" | ")
     );
     console.log(
@@ -462,8 +530,30 @@ function printReport(reportPath: string, report: JsonReport): void {
 }
 
 async function main(): Promise<void> {
-  const fixturePaths = FIXTURE_NAMES.map((name) => path.join(REPO_ROOT, name));
-  const fixtures = fixturePaths.map(decodeFixtureImage).map(prepareTargetFixture);
+  const explicitFixtures = process.argv.slice(2);
+  const defaultFixtures = [
+    "jobs.jpeg",
+    "landscape.avif",
+    "fixtures/regression/cross.pgm",
+    "fixtures/regression/bands.ppm",
+  ]
+    .map((name) => path.join(REPO_ROOT, name))
+    .filter((candidate, index) => existsSync(candidate) && index < 2 ? true : false);
+  const fallbackFixtures = [
+    path.join(REPO_ROOT, "fixtures", "regression", "cross.pgm"),
+    path.join(REPO_ROOT, "fixtures", "regression", "bands.ppm"),
+  ];
+  const fixturePaths =
+    explicitFixtures.length > 0
+      ? explicitFixtures.map((fixturePath) =>
+          path.isAbsolute(fixturePath)
+            ? fixturePath
+            : path.join(REPO_ROOT, fixturePath)
+        )
+      : defaultFixtures.length > 0
+        ? defaultFixtures
+        : fallbackFixtures;
+  const fixtures = fixturePaths.map(decodeImageFile).map(prepareTargetFixture);
   const results: BenchmarkResult[] = [];
 
   for (const fixture of fixtures) {

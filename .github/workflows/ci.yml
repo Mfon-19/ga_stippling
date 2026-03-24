@@ -46,3 +46,30 @@ jobs:
 
       - name: Run native tests
         run: ctest --test-dir cpp/build --output-on-failure
+
+  regression-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Emscripten
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y emscripten
+
+      - name: Run fixture benchmark smoke test
+        run: npm run benchmark:fixtures
+
+      - name: Run native/WASM parity validation
+        run: npm run parity:check
