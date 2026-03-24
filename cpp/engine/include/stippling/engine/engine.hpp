@@ -116,6 +116,8 @@ class Engine {
 
  private:
   struct PyramidLevel {
+    // Each level stores a resampled target + importance map. The optimizer runs
+    // independently per level and promotes only the best dots upward.
     int width{0};
     int height{0};
     std::vector<std::uint8_t> target{};
@@ -132,6 +134,9 @@ class Engine {
   std::size_t current_level_index_{0};
   std::uint32_t total_generations_{0};
   std::unique_ptr<Optimizer> optimizer_{};
+  // When the optimizer is still working at a coarse pyramid level we project
+  // the current best dots back into full-image coordinates so the UI, exports,
+  // and parity tools can still observe meaningful output.
   mutable std::vector<Dot> projected_best_dots_{};
   EngineStatus status_{EngineStatus::booting};
 
@@ -139,6 +144,9 @@ class Engine {
       const std::vector<Dot>& dots,
       int source_width,
       int source_height) const;
+
+  // Rebuild the optimizer for the next pyramid level once the current level has
+  // either converged enough or stalled long enough to justify promotion.
   void initialize_level_optimizer(const std::vector<Dot>& seed_dots);
   void maybe_promote_level();
 };

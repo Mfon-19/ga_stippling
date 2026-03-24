@@ -16,6 +16,17 @@ namespace stippling {
  * Candidates own their raster state so child construction and mutation can
  * update squared error incrementally instead of redrawing the entire image
  * after every small dot change.
+ *
+ * The optimizer deliberately mixes several strategies instead of behaving like
+ * a textbook GA:
+ * - importance-weighted seeding to avoid spending early generations in empty
+ *   space
+ * - island-aware tournament selection to preserve some diversity
+ * - local search on elites and promising proposals
+ * - restart logic when the population stalls
+ *
+ * The determinism requirement is strict because the native CLI, WASM worker,
+ * parity tests, and benchmark harness all compare outputs across runtimes.
  */
 class Optimizer {
  public:
@@ -43,6 +54,9 @@ class Optimizer {
 
  private:
   struct Candidate {
+    // Each candidate owns its own incremental raster state. The grid tracks
+    // coverage counts and rendered pixels so mutation/crossover can ask for the
+    // exact error delta of replacing one dot without rebuilding the whole image.
     explicit Candidate(int width, int height) : grid(width, height) {}
 
     std::vector<Dot> dots{};
@@ -76,6 +90,8 @@ class Optimizer {
   double last_best_fitness_{0.0};
   std::uint32_t stagnation_generations_{0};
 
+  // Build a cumulative distribution over target pixels so guided seeding and
+  // guided mutation can sample dense / high-importance regions quickly.
   void ensure_initialized() const;
   void build_target_sampler();
   void initialize_population();
@@ -87,7 +103,14 @@ class Optimizer {
   void apply_restart_strategy_if_needed();
   std::vector<Candidate> preserve_elites(std::uint32_t elite_count) const;
   void refine_elites(std::vector<Candidate>* elites);
+
+  // Build a child by starting from the fitter parent and opportunistically
+  // importing dots from the secondary parent when the incremental error delta
+  // or target score says the replacement is worthwhile.
   Candidate make_child(const Candidate& parent_a, const Candidate& parent_b);
+
+  // Parent selection is island-aware so most tournaments stay local while a
+  // small global sample probability still allows migration-like mixing.
   const Candidate& select_parent(std::size_t island_index);
   void migrate_islands();
   std::size_t sample_target_index();
@@ -97,6 +120,10 @@ class Optimizer {
   double dot_target_score(const Dot& dot) const;
   Dot random_dot();
   Dot local_search_dot(const Dot& dot, double distance_scale, double radius_scale);
+
+  // Crossover does not preserve "dot identity". Instead it searches for a weak
+  // or overlapping location in the child where a proposed dot is most likely to
+  // improve local coverage.
   std::size_t find_replacement_index(const Candidate& child, const Dot& proposal) const;
   void refine_candidate(Candidate* candidate, std::uint32_t attempts);
   void mutate(Candidate& candidate);

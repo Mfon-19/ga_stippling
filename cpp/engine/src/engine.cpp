@@ -487,6 +487,9 @@ ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
       compute_edge_response(blurred, source_image.width, source_image.height);
   const auto structure = compute_local_structure(grayscale, blurred);
 
+  // The optimizer consumes two parallel views of the image:
+  // - a blurred grayscale target used for thresholding / raster error
+  // - a richer importance map used for dot allocation and guided proposals
   importance_map_ = combine_importance(blurred, edges, structure);
   optimizer_target_ = quantize_channel(blurred);
   const auto thresholded = threshold_channel(optimizer_target_, config.threshold);
@@ -520,6 +523,8 @@ void Engine::initialize_optimizer() {
   int previous_width = 0;
   int previous_height = 0;
 
+  // The pyramid is fixed and deterministic so browser/WASM and native CLI runs
+  // observe the same promotion schedule and can be compared in parity tests.
   for (const auto scale : scales) {
     const auto width =
         std::max(1, static_cast<int>(std::round(image_.width * scale)));
@@ -568,6 +573,9 @@ void Engine::initialize_level_optimizer(const std::vector<Dot>& seed_dots) {
   const auto dot_scale = std::sqrt(level_area / full_area);
 
   EngineConfig level_config = config_;
+  // Coarser levels do not need the full-resolution dot budget. We scale dot
+  // count by image area so early levels find the broad silhouette first and
+  // only spend the full budget once the run reaches finer levels.
   level_config.dot_count = std::max<std::uint32_t>(
       1u, std::min(config_.dot_count,
                    static_cast<std::uint32_t>(std::round(
@@ -592,6 +600,10 @@ void Engine::maybe_promote_level() {
   }
 
   const auto& current_level = pyramid_[current_level_index_];
+  // Keep a full-resolution projection of the current coarse solution available
+  // even before promotion. The UI and export surfaces always speak in original
+  // image coordinates, so callers should not have to care which pyramid level
+  // is active underneath them.
   projected_best_dots_ = project_dots_to_image_space(
       optimizer_->best_dots(), current_level.width, current_level.height);
 
@@ -608,6 +620,8 @@ void Engine::maybe_promote_level() {
   }
 
   const auto& next_level = pyramid_[current_level_index_ + 1];
+  // Promotion carries only the best dots forward. Diversity for the next level
+  // is rebuilt inside Optimizer::initialize_population around those seed dots.
   auto seed_dots = scale_dots_between_spaces(
       optimizer_->best_dots(), current_level.width, current_level.height,
       next_level.width, next_level.height);
