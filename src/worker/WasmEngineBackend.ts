@@ -20,6 +20,7 @@ import { BackendCallbacks, WorkerEngineBackend } from "./WorkerEngineBackend";
  */
 export class WasmEngineBackend implements WorkerEngineBackend {
   private runId: string | null = null;
+  private lastRunId: string | null = null;
   private generation = 0;
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSnapshotAt = 0;
@@ -37,7 +38,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     processing: TargetProcessingConfig,
     requestId: string
   ): TargetPreparedEvent {
-    this.stop();
+    this.resetRunState();
     const preparedTarget = this.engine.prepareTarget(image, processing);
     this.preparedWidth = preparedTarget.image.width;
     this.preparedHeight = preparedTarget.image.height;
@@ -60,8 +61,9 @@ export class WasmEngineBackend implements WorkerEngineBackend {
       throw new Error("No image has been loaded into the WASM engine");
     }
 
-    this.stop();
+    this.resetRunState();
     this.runId = runId;
+    this.lastRunId = runId;
     this.generation = 0;
     this.lastSnapshotAt = 0;
     this.currentConfig = config;
@@ -84,11 +86,10 @@ export class WasmEngineBackend implements WorkerEngineBackend {
 
   public stop(): void {
     this.pause();
+    this.lastRunId = this.runId ?? this.lastRunId;
     this.runId = null;
-    this.generation = 0;
     this.currentConfig = null;
     this.startedAt = 0;
-    this.timelapseFrames = [];
   }
 
   public hasImage(): boolean {
@@ -96,11 +97,11 @@ export class WasmEngineBackend implements WorkerEngineBackend {
   }
 
   public activeRunId(): string | null {
-    return this.runId;
+    return this.runId ?? this.lastRunId;
   }
 
   public createSnapshotEvent(requestId: string, runId: string): EngineSnapshotEvent {
-    if (this.runId !== runId) {
+    if (runId !== this.runId && runId !== this.lastRunId) {
       throw new Error(`Run ${runId} is not active`);
     }
 
@@ -121,7 +122,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     format: EngineExportFormat,
     options?: EngineExportOptions
   ): EngineArtifactEvent {
-    if (this.runId !== runId) {
+    if (runId !== this.runId && runId !== this.lastRunId) {
       throw new Error(`Run ${runId} is not active`);
     }
 
@@ -168,7 +169,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
   }
 
   public dispose(): void {
-    this.stop();
+    this.resetRunState();
     this.engine.dispose();
   }
 
@@ -236,5 +237,15 @@ export class WasmEngineBackend implements WorkerEngineBackend {
       generation,
       dots: this.engine.getBestDots(),
     });
+  }
+
+  private resetRunState(): void {
+    this.pause();
+    this.runId = null;
+    this.lastRunId = null;
+    this.generation = 0;
+    this.currentConfig = null;
+    this.startedAt = 0;
+    this.timelapseFrames = [];
   }
 }

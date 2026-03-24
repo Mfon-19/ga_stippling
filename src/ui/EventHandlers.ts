@@ -2,6 +2,7 @@ import { CanvasManager } from "./CanvasManager";
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { CONFIG } from "../utils/config";
 import {
+  EngineCapabilities,
   EngineProgressEvent,
   EngineRunConfig,
   EngineSnapshotEvent,
@@ -24,6 +25,9 @@ export interface UIElements {
   fileInput: HTMLInputElement;
   startButton: HTMLElement;
   stopButton: HTMLElement;
+  exportSvgButton: HTMLElement;
+  exportPngButton: HTMLElement;
+  exportTimelapseButton: HTMLElement;
 }
 
 export interface ProcessingState {
@@ -44,6 +48,7 @@ export class EventHandlers {
   private canvasManager: CanvasManager;
   private rasterProcessor = new RasterImageProcessor();
   private engineClient: WasmEngineClient | null = null;
+  private engineCapabilities: EngineCapabilities | null = null;
   private elements: UIElements;
   private state: ProcessingState;
 
@@ -71,8 +76,13 @@ export class EventHandlers {
    * The worker is optional during the migration, so the UI keeps a clean
    * fallback path to the original main-thread implementation.
    */
-  public setEngineClient(engineClient: WasmEngineClient | null): void {
+  public setEngineClient(
+    engineClient: WasmEngineClient | null,
+    capabilities: EngineCapabilities | null = null
+  ): void {
     this.engineClient = engineClient;
+    this.engineCapabilities = capabilities;
+    this.updateExportButtons();
 
     if (!this.engineClient) {
       return;
@@ -117,6 +127,18 @@ export class EventHandlers {
       "click",
       this.handleStopEvolution.bind(this)
     );
+    this.elements.exportSvgButton.addEventListener(
+      "click",
+      this.handleExportSvg.bind(this)
+    );
+    this.elements.exportPngButton.addEventListener(
+      "click",
+      this.handleExportPng.bind(this)
+    );
+    this.elements.exportTimelapseButton.addEventListener(
+      "click",
+      this.handleExportTimelapse.bind(this)
+    );
   }
 
   /**
@@ -135,6 +157,9 @@ export class EventHandlers {
 
       const imgCtx = this.canvasManager.getImageContext();
       imgCtx.drawImage(image, 0, 0);
+
+      // Update viewport footer telemetry
+      this.updateViewportResolution(image.width, image.height);
 
       void this.processImage();
     } catch (error) {
@@ -329,11 +354,11 @@ export class EventHandlers {
     this.state.generationsPerSecond = null;
     if (this.engineClient && this.state.workerRunId) {
       const runId = this.state.workerRunId;
-      this.state.workerRunId = null;
       void this.engineClient.stopRun(runId).catch((error) => {
         console.error("Failed to stop worker evolution:", error);
       });
     }
+    this.updateExportButtons();
   }
 
   /**
@@ -346,8 +371,20 @@ export class EventHandlers {
     this.elements.blurSlider.disabled = isRunning;
     this.elements.thresholdSlider.disabled = isRunning;
     this.elements.dotCountInput.disabled = isRunning;
+    this.updateExportButtons();
 
     document.body.classList.toggle("evolution-running", isRunning);
+
+    // Update HUD status indicator
+    const indicator = document.getElementById('statusIndicator');
+    if (indicator) {
+      indicator.style.background = isRunning ? '#ffd000' : '#00ff88';
+      indicator.style.boxShadow = isRunning ? '0 0 6px #ffd000' : '0 0 6px #00ff88';
+    }
+    const statusText = indicator?.nextElementSibling as HTMLElement | null;
+    if (statusText) {
+      statusText.textContent = isRunning ? 'Evolution Active' : 'System Nominal';
+    }
   }
 
   /**
@@ -403,6 +440,7 @@ export class EventHandlers {
       this.state.generationsPerSecond = null;
       this.updateUIState(true);
       await this.engineClient.startRun(runId, runConfig);
+      this.updateExportButtons();
     } catch (error) {
       this.state.workerRunId = null;
       this.state.isEvolutionRunning = false;
@@ -442,10 +480,12 @@ export class EventHandlers {
     );
     bwCtx.putImageData(processedImageData, 0, 0);
 
+    this.state.workerRunId = null;
     this.state.recommendedDotCount = preparedTarget.stats.recommendedDotCount;
     this.elements.dotCountElement.style.display = "block";
     this.elements.dotCountInput.style.display = "block";
     this.updateDotCountDisplay();
+    this.updateExportButtons();
   }
 
   private serializeImageData(imageData: ImageData): SerializedImageBuffer {
@@ -469,6 +509,7 @@ export class EventHandlers {
     this.state.bestFitness = event.metrics.bestFitness;
     this.state.generationsPerSecond = event.metrics.generationsPerSecond;
     this.updateDotCountDisplay();
+    this.updateEvolutionFooter();
   };
 
   private handleWorkerSnapshot = (event: EngineSnapshotEvent): void => {
@@ -496,5 +537,84 @@ export class EventHandlers {
       evolCtx.arc(dot.x, dot.y, dot.radius, 0, 2 * Math.PI);
       evolCtx.fill();
     }
+  }
+
+  /** Update viewport resolution footers in the HUD */
+  private updateViewportResolution(w: number, h: number): void {
+    const viewports = document.querySelectorAll('.viewport-footer span:first-child');
+    viewports.forEach((el) => {
+      (el as HTMLElement).textContent = `RES: ${w} × ${h}`;
+    });
+  }
+
+  /** Update the evolution viewport footer with live telemetry */
+  private updateEvolutionFooter(): void {
+    const evolViewport = document.getElementById('viewportEvolution');
+    if (!evolViewport) return;
+    const footerSpans = evolViewport.querySelectorAll('.viewport-footer span');
+    if (footerSpans.length >= 2) {
+      (footerSpans[0] as HTMLElement).textContent = `GEN: ${this.state.generations}`;
+      (footerSpans[1] as HTMLElement).textContent = this.state.bestFitness !== null
+        ? `FITNESS: ${this.state.bestFitness.toFixed(4)}`
+        : 'FITNESS: —';
+    }
+  }
+
+  private async handleExportSvg(): Promise<void> {
+    await this.exportArtifact("svg", { scale: 4 });
+  }
+
+  private async handleExportPng(): Promise<void> {
+    await this.exportArtifact("png", { scale: 4 });
+  }
+
+  private async handleExportTimelapse(): Promise<void> {
+    await this.exportArtifact("timelapse-svg", {
+      scale: 4,
+      frameDurationMs: 120,
+    });
+  }
+
+  private async exportArtifact(
+    format: "svg" | "png" | "timelapse-svg",
+    options?: { scale?: number; frameDurationMs?: number }
+  ): Promise<void> {
+    if (!this.engineClient || !this.state.workerRunId) {
+      return;
+    }
+
+    try {
+      const artifact = await this.engineClient.exportArtifact(
+        this.state.workerRunId,
+        format,
+        options
+      );
+      const blob = new Blob([artifact.data], { type: artifact.mimeType });
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = artifact.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error(`Failed to export ${format}:`, error);
+    }
+  }
+
+  private updateExportButtons(): void {
+    const canExport = !!this.engineClient && !!this.state.workerRunId;
+    const canExportSvg = canExport && !!this.engineCapabilities?.exportSvg;
+    const canExportPng = canExport && !!this.engineCapabilities?.exportPng;
+    const canExportTimelapse =
+      canExport && !!this.engineCapabilities?.exportTimelapse;
+
+    (this.elements.exportSvgButton as HTMLButtonElement).disabled =
+      !canExportSvg;
+    (this.elements.exportPngButton as HTMLButtonElement).disabled =
+      !canExportPng;
+    (this.elements.exportTimelapseButton as HTMLButtonElement).disabled =
+      !canExportTimelapse;
   }
 }

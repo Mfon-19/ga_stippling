@@ -56,6 +56,9 @@ class App {
       fileInput: this.getRequiredElement("imgInput") as HTMLInputElement,
       startButton: this.getRequiredElement("start"),
       stopButton: this.getRequiredElement("stop"),
+      exportSvgButton: this.getRequiredElement("exportSvg"),
+      exportPngButton: this.getRequiredElement("exportPng"),
+      exportTimelapseButton: this.getRequiredElement("exportTimelapse"),
     };
 
     this.validateUIElements(elements);
@@ -151,7 +154,10 @@ class App {
 
     try {
       const readyEvent = await this.engineClient.initialize();
-      this.eventHandlers.setEngineClient(this.engineClient);
+      this.eventHandlers.setEngineClient(
+        this.engineClient,
+        readyEvent.capabilities
+      );
       console.info(
         `Engine worker ready with backend: ${readyEvent.capabilities.backend}`
       );
