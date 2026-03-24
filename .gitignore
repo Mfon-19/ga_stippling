@@ -2,3 +2,5 @@ node_modules/
 
 images/
 cpp/build/
+cpp/build-wasm/
+src/wasm/generated/stipplingEngine.js

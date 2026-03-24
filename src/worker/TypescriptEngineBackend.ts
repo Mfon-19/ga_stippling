@@ -3,7 +3,6 @@ import { RasterImageProcessor } from "../shared/RasterImageProcessor";
 import { createSeededRandomSource } from "../shared/random";
 import {
   EngineRunMetrics,
-  EngineProgressEvent,
   EngineRunConfig,
   EngineSnapshotEvent,
   SerializedDot,
@@ -11,18 +10,14 @@ import {
   TargetPreparedEvent,
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
-
-interface BackendCallbacks {
-  onProgress(event: EngineProgressEvent): void;
-  onSnapshot(event: EngineSnapshotEvent): void;
-}
+import { BackendCallbacks, WorkerEngineBackend } from "./WorkerEngineBackend";
 
 /**
  * Transitional backend that runs the existing TypeScript optimizer inside the
  * worker. The public surface is shaped like the future native backend so the
  * UI can move off the main thread before the C++ port is finished.
  */
-export class TypescriptEngineBackend {
+export class TypescriptEngineBackend implements WorkerEngineBackend {
   private rasterProcessor = new RasterImageProcessor();
   private imageData: ImageData | null = null;
   private geneticAlgorithm: GeneticAlgorithm | null = null;
@@ -140,6 +135,10 @@ export class TypescriptEngineBackend {
 
   public activeRunId(): string | null {
     return this.runId;
+  }
+
+  public dispose(): void {
+    this.stop();
   }
 
   private scheduleNextBatch(callbacks: BackendCallbacks): void {

@@ -143,8 +143,8 @@ class App {
   }
 
   /**
-   * Initialize the worker client. The worker currently loads a stub backend
-   * until the native C++/WASM engine is ready.
+   * Initialize the worker client. The worker prefers the native WASM engine
+   * and only falls back if module bootstrap fails.
    */
   private async initializeEngineClient(): Promise<void> {
     this.engineClient = new WasmEngineClient();

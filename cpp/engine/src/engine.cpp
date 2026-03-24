@@ -126,6 +126,7 @@ std::vector<std::uint8_t> extract_target_channel(const ImageBuffer& image) {
 }  // namespace
 
 Engine::Engine() {
+  capabilities_.incremental_fitness = true;
   status_ = EngineStatus::idle;
 }
 

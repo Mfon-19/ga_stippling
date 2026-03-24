@@ -30,6 +30,7 @@ The active migration roadmap lives in [`docs/cpp-wasm-migration-plan.md`](./docs
 
 - Node.js (v14 or later)
 - npm (v6 or later)
+- Emscripten (`emcc` and `emcmake`) for the native WASM build used by `npm run dev` and `npm run build`
 
 ### Setup
 
@@ -106,7 +107,7 @@ src/
 │   └── TypescriptEngineBackend.ts # Off-main-thread fallback engine
 ├── wasm/           # Browser-side engine client and module loader
 │   ├── WasmEngineClient.ts # Worker client wrapper
-│   └── engineModule.ts # Placeholder WASM loader
+│   └── engineModule.ts # Native WASM engine wrapper
 └── main.ts         # Application entry point
 ```
 
@@ -141,6 +142,7 @@ To build the application for production:
 npm run build
 ```
 
+This command now regenerates the native WASM module before the TypeScript/Vite build.
 The compiled files will be in the `dist` directory.
 
 ### Native Scaffold

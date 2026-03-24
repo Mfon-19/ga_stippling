@@ -120,28 +120,33 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 12. CI foundation
    - GitHub Actions workflow added for the web build and native C++ build/tests
    - repo now has automated validation for the two active implementation paths
+13. Real WASM build and worker backend
+   - Emscripten now builds the native engine into a single-file ES module under `src/wasm/generated/`
+   - the worker now prefers a real `WasmEngineBackend` instead of the old stub path
+   - the browser build now regenerates the WASM module before TypeScript and Vite builds
+14. Native incremental fitness integration
+   - the native optimizer now carries per-candidate raster state instead of redrawing from scratch every generation
+   - crossover and mutation now update squared error through the raster-grid delta path
+   - incremental error updates now have dedicated raster-grid correctness coverage
 
 ### Current State
 
-- The browser app now routes target preparation and optimization through the worker-backed TypeScript backend when the worker is available.
-- The native C++ engine now has a real target-preparation API and incremental raster foundations, but it is still not a feature-parity optimizer implementation.
-- A plain C ABI now exists for the native engine, which is the right integration boundary for a future WASM build.
-- The native core now has a deterministic optimizer loop, but it still uses full redraw fitness rather than the future incremental path.
-- The native CLI and C ABI can now report optimizer progress, which is enough to support the first browser-side WASM adapter once the toolchain is installed.
-- The native ABI can now surface best-dot snapshot data for browser preview rendering once the WASM build path exists.
+- The browser worker now boots a real C++/WASM backend by default and falls back to the TypeScript worker backend only if native module initialization fails.
+- The browser build now has a reproducible Emscripten path and emits a generated native module under `src/wasm/generated/`.
+- The native C++ engine now has a real target-preparation API, a JS-friendly C ABI, and a browser-consumable WASM wrapper.
+- The native optimizer now performs incremental raster/error updates during crossover and mutation instead of recomputing every child from a full redraw.
+- The native CLI, C ABI, and browser worker can all read best-dot snapshots from the same engine surface.
 - Basic CI now validates the current browser and native codepaths on every push and pull request.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 
 ### Remaining High-Priority Work
 
-1. Replace the worker TypeScript backend with a real C++/WASM adapter.
-2. Install or provision the Emscripten toolchain so the new C ABI can be compiled and wired into the browser worker.
-3. Compile the native engine and C ABI to WASM and replace the worker TypeScript backend with that adapter.
-4. Replace full redraw fitness in the native optimizer with true incremental fitness on the raster-grid foundation.
-5. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
-6. Add multiscale optimization and stronger search heuristics.
-7. Expand exports, CLI workflows, tests, and CI.
+1. Expand deterministic benchmarking into saved reports, comparison tooling, and native/browser parity checks.
+2. Add multiscale optimization and stronger search heuristics.
+3. Replace the current threshold-only target preparation with richer preprocessing and importance maps.
+4. Expand exports, CLI workflows, tests, and CI.
+5. Add browser/native regression fixtures that prove WASM snapshots stay aligned with CLI snapshots.
 
 ## Delivery Phases
 
@@ -166,7 +171,7 @@ Notes:
 
 ### Phase 2: Worker Protocol and WASM Build Skeleton
 
-Status: partially complete
+Status: complete
 
 Purpose: define stable integration boundaries before the heavy port begins.
 
@@ -184,7 +189,7 @@ Important design rule:
 
 ### Phase 3: Minimal C++ Engine Parity
 
-Status: started
+Status: materially complete for the first end-to-end worker path
 
 Purpose: replace the TypeScript optimizer path with a functioning worker-hosted C++ engine.
 
@@ -203,7 +208,7 @@ Important design rule:
 
 ### Phase 4: Incremental Fitness
 
-Status: not started
+Status: started
 
 Purpose: replace the current full-raster full-population recompute with a materially stronger fitness engine.
 
@@ -218,7 +223,8 @@ Deliverables:
 Implementation direction:
 
 - Each individual should own a buffer that can be updated locally when a mutation occurs.
-- The engine should support a fallback full recompute path for validation and debugging.
+- The first slice is now in place through raster-backed candidate state and delta-based squared-error updates.
+- The engine should still gain a validation mode that compares incremental and full recompute paths on demand.
 
 ### Phase 5: Multiscale Optimization
 

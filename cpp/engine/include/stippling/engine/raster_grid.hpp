@@ -20,6 +20,11 @@ class RasterGrid {
   void draw_dot(const Dot& dot);
   void erase_dot(const Dot& dot);
   void apply_dot_delta(const Dot& previous_dot, const Dot& next_dot);
+  [[nodiscard]] std::uint64_t apply_dot_delta_and_update_error(
+      const Dot& previous_dot,
+      const Dot& next_dot,
+      const std::vector<std::uint8_t>& target,
+      std::uint64_t current_squared_error);
 
   [[nodiscard]] std::uint64_t squared_error(
       const std::vector<std::uint8_t>& target) const;
@@ -33,9 +38,22 @@ class RasterGrid {
   std::vector<std::uint8_t> pixels_;
   std::vector<std::uint16_t> coverage_;
 
-  void rasterize_dot(const Dot& dot, int delta);
-  void draw_circle(int center_x, int center_y, int radius, int delta);
-  void update_horizontal_span(int y, int start_x, int end_x, int delta);
+  void rasterize_dot(const Dot& dot,
+                     int delta,
+                     const std::vector<std::uint8_t>* target,
+                     std::uint64_t* squared_error);
+  void draw_circle(int center_x,
+                   int center_y,
+                   int radius,
+                   int delta,
+                   const std::vector<std::uint8_t>* target,
+                   std::uint64_t* squared_error);
+  void update_horizontal_span(int y,
+                              int start_x,
+                              int end_x,
+                              int delta,
+                              const std::vector<std::uint8_t>* target,
+                              std::uint64_t* squared_error);
 };
 
 }  // namespace stippling

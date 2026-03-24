@@ -3,17 +3,20 @@
 import {
   EngineCommand,
   EngineEvent,
+  EngineCapabilities,
   EngineSnapshotEvent,
   EngineStatus,
   EngineStatusEvent,
 } from "../shared/engineProtocol";
 import { TypescriptEngineBackend } from "./TypescriptEngineBackend";
 import { WasmEngineModule, loadEngineModule } from "../wasm/engineModule";
+import { WasmEngineBackend } from "./WasmEngineBackend";
+import { WorkerEngineBackend } from "./WorkerEngineBackend";
 
 interface WorkerState {
   status: EngineStatus;
   module: WasmEngineModule | null;
-  backend: TypescriptEngineBackend | null;
+  backend: WorkerEngineBackend | null;
 }
 
 const workerScope = self as DedicatedWorkerGlobalScope;
@@ -110,8 +113,17 @@ async function handleCommand(command: EngineCommand): Promise<void> {
 
 async function handleInitialize(requestId: string): Promise<void> {
   if (!state.module) {
-    state.module = await loadEngineModule();
-    state.backend = new TypescriptEngineBackend();
+    try {
+      state.module = await loadEngineModule();
+      state.backend = new WasmEngineBackend(state.module.createEngine());
+    } catch (error) {
+      console.warn(
+        "Failed to load the native WASM backend. Falling back to the TypeScript worker engine.",
+        error
+      );
+      state.module = createTypescriptFallbackModule();
+      state.backend = new TypescriptEngineBackend();
+    }
   }
 
   state.status = "idle";
@@ -148,6 +160,27 @@ function ensureInitialized(): void {
   if (!state.module || !state.backend) {
     throw new Error("Engine worker is not initialized");
   }
+}
+
+function createTypescriptFallbackModule(): WasmEngineModule {
+  const capabilities: EngineCapabilities = {
+    backend: "typescript",
+    incrementalFitness: false,
+    multiscale: false,
+    benchmarkMode: false,
+    exportSvg: false,
+    exportPng: false,
+  };
+
+  return {
+    capabilities,
+    createEngine() {
+      throw new Error("The TypeScript fallback does not expose a native engine");
+    },
+    dispose() {
+      // The fallback path owns no native module resources.
+    },
+  };
 }
 
 function ensureImageLoaded(): void {

@@ -45,5 +45,24 @@ int main() {
     assert(grid.squared_error(white_target) > 0);
   }
 
+  {
+    stippling::RasterGrid incremental(24, 24);
+    stippling::RasterGrid full(24, 24);
+    const std::vector<std::uint8_t> target(24 * 24, 255);
+    const stippling::Dot previous{6.0, 6.0, 3.0};
+    const stippling::Dot next{16.0, 14.0, 4.0};
+
+    incremental.draw_dot(previous);
+    auto incremental_error = incremental.squared_error(target);
+    incremental_error = incremental.apply_dot_delta_and_update_error(
+        previous, next, target, incremental_error);
+
+    full.draw_dot(next);
+    const auto full_error = full.squared_error(target);
+
+    assert(incremental.pixels() == full.pixels());
+    assert(incremental_error == full_error);
+  }
+
   return 0;
 }

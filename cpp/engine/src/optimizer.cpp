@@ -6,9 +6,15 @@
 #include <stdexcept>
 #include <utility>
 
-#include "stippling/engine/raster_grid.hpp"
-
 namespace stippling {
+
+namespace {
+
+bool dots_equal(const Dot& left, const Dot& right) {
+  return left.x == right.x && left.y == right.y && left.radius == right.radius;
+}
+
+}  // namespace
 
 Optimizer::RandomGenerator::RandomGenerator(std::uint32_t seed)
     : state_(seed) {}
@@ -72,7 +78,7 @@ OptimizerProgress Optimizer::evolve_batch() {
     }
 
     population_ = std::move(next_population);
-    evaluate_population();
+    refresh_progress();
     ++progress_.generation;
   }
 
@@ -109,7 +115,7 @@ void Optimizer::initialize_population() {
 
   for (std::uint32_t candidate_index = 0;
        candidate_index < config_.population_size; ++candidate_index) {
-    Candidate candidate;
+    Candidate candidate(width_, height_);
     candidate.dots.reserve(config_.dot_count);
 
     for (std::uint32_t dot_index = 0; dot_index < config_.dot_count; ++dot_index) {
@@ -125,6 +131,18 @@ void Optimizer::evaluate_population() {
     evaluate_candidate(candidate);
   }
 
+  refresh_progress();
+}
+
+void Optimizer::update_candidate_fitness(Candidate& candidate) const {
+  const auto max_diff = static_cast<double>(width_) * static_cast<double>(height_) *
+                        255.0 * 255.0;
+  const auto raw_fitness =
+      1.0 - static_cast<double>(candidate.squared_error) / max_diff;
+  candidate.fitness = std::sqrt(std::max(0.0, raw_fitness));
+}
+
+void Optimizer::refresh_progress() {
   const auto best = std::max_element(
       population_.begin(), population_.end(),
       [](const Candidate& left, const Candidate& right) {
@@ -135,17 +153,13 @@ void Optimizer::evaluate_population() {
 }
 
 void Optimizer::evaluate_candidate(Candidate& candidate) const {
-  RasterGrid grid(width_, height_);
+  candidate.grid.clear();
   for (const auto& dot : candidate.dots) {
-    grid.draw_dot(dot);
+    candidate.grid.draw_dot(dot);
   }
 
-  candidate.squared_error = grid.squared_error(target_);
-  const auto max_diff = static_cast<double>(width_) * static_cast<double>(height_) *
-                        255.0 * 255.0;
-  const auto raw_fitness =
-      1.0 - static_cast<double>(candidate.squared_error) / max_diff;
-  candidate.fitness = std::sqrt(std::max(0.0, raw_fitness));
+  candidate.squared_error = candidate.grid.squared_error(target_);
+  update_candidate_fitness(candidate);
 }
 
 std::vector<Optimizer::Candidate> Optimizer::preserve_elites(
@@ -155,24 +169,31 @@ std::vector<Optimizer::Candidate> Optimizer::preserve_elites(
             [](const Candidate& left, const Candidate& right) {
               return left.fitness > right.fitness;
             });
-  sorted.resize(std::min<std::size_t>(elite_count, sorted.size()));
+  const auto keep_count = std::min<std::size_t>(elite_count, sorted.size());
+  sorted.erase(sorted.begin() + keep_count, sorted.end());
   return sorted;
 }
 
 Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
                                            const Candidate& parent_b) {
-  Candidate child;
-  child.dots.reserve(config_.dot_count);
+  Candidate child = parent_a;
 
   for (std::size_t index = 0; index < parent_a.dots.size(); ++index) {
     const auto& selected_parent =
         dot_target_score(parent_a.dots[index]) > dot_target_score(parent_b.dots[index])
             ? parent_a
             : parent_b;
-    child.dots.push_back(selected_parent.dots[index]);
+    const auto& next_dot = selected_parent.dots[index];
+
+    if (!dots_equal(child.dots[index], next_dot)) {
+      child.squared_error = child.grid.apply_dot_delta_and_update_error(
+          child.dots[index], next_dot, target_, child.squared_error);
+      child.dots[index] = next_dot;
+    }
   }
 
   mutate(child);
+  update_candidate_fitness(child);
   return child;
 }
 
@@ -224,14 +245,26 @@ Dot Optimizer::random_dot() {
 
 void Optimizer::mutate(Candidate& candidate) {
   for (auto& dot : candidate.dots) {
+    Dot next_dot = dot;
+    bool changed = false;
+
     if (random_.next_unit() < config_.mutation_rate) {
-      dot.x = std::floor(random_.next_unit() * static_cast<double>(width_));
+      next_dot.x = std::floor(random_.next_unit() * static_cast<double>(width_));
+      changed = true;
     }
     if (random_.next_unit() < config_.mutation_rate) {
-      dot.y = std::floor(random_.next_unit() * static_cast<double>(height_));
+      next_dot.y = std::floor(random_.next_unit() * static_cast<double>(height_));
+      changed = true;
     }
     if (random_.next_unit() < config_.mutation_rate) {
-      dot.radius = 1.0 + random_.next_unit() * 2.0;
+      next_dot.radius = 1.0 + random_.next_unit() * 2.0;
+      changed = true;
+    }
+
+    if (changed) {
+      candidate.squared_error = candidate.grid.apply_dot_delta_and_update_error(
+          dot, next_dot, target_, candidate.squared_error);
+      dot = next_dot;
     }
   }
 }

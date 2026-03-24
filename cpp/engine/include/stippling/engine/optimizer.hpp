@@ -5,6 +5,7 @@
 
 #include "stippling/engine/dot.hpp"
 #include "stippling/engine/engine.hpp"
+#include "stippling/engine/raster_grid.hpp"
 
 namespace stippling {
 
@@ -12,9 +13,9 @@ namespace stippling {
  * Deterministic native optimizer that mirrors the current browser GA at a high
  * level while living entirely in the C++ core.
  *
- * The first version still recomputes candidate fitness from full redraws, but
- * it is structured around the raster-grid abstraction so incremental fitness
- * can replace those redraws later without changing the engine surface.
+ * Candidates own their raster state so child construction and mutation can
+ * update squared error incrementally instead of redrawing the entire image
+ * after every small dot change.
  */
 class Optimizer {
  public:
@@ -32,7 +33,10 @@ class Optimizer {
 
  private:
   struct Candidate {
+    explicit Candidate(int width, int height) : grid(width, height) {}
+
     std::vector<Dot> dots{};
+    RasterGrid grid;
     double fitness{0.0};
     std::uint64_t squared_error{0};
   };
@@ -60,6 +64,8 @@ class Optimizer {
   void initialize_population();
   void evaluate_population();
   void evaluate_candidate(Candidate& candidate) const;
+  void update_candidate_fitness(Candidate& candidate) const;
+  void refresh_progress();
   std::vector<Candidate> preserve_elites(std::uint32_t elite_count) const;
   Candidate make_child(const Candidate& parent_a, const Candidate& parent_b);
   const Candidate& select_parent();
