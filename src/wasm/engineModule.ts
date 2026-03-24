@@ -305,7 +305,7 @@ class NativeWasmEngineModule implements WasmEngineModule {
   public readonly capabilities: EngineCapabilities = {
     backend: "wasm",
     incrementalFitness: true,
-    multiscale: false,
+    multiscale: true,
     benchmarkMode: true,
     exportSvg: true,
     exportPng: true,

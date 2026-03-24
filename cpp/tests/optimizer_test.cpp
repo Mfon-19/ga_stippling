@@ -7,15 +7,32 @@
 namespace {
 
 stippling::ImageBuffer make_source_image() {
+  constexpr int kWidth = 16;
+  constexpr int kHeight = 16;
+  std::vector<std::uint8_t> pixels(
+      static_cast<std::size_t>(kWidth * kHeight * 4), 255u);
+
+  for (int y = 0; y < kHeight; ++y) {
+    for (int x = 0; x < kWidth; ++x) {
+      const auto dark_pixel =
+          x == y || x + y == kWidth - 1 ||
+          (x >= 5 && x <= 10 && y >= 4 && y <= 11) ||
+          (y == 8 && x > 2 && x < 13);
+      const auto value = static_cast<std::uint8_t>(dark_pixel ? 16 : 240);
+      const auto index =
+          static_cast<std::size_t>((y * kWidth + x) * 4);
+      pixels[index] = value;
+      pixels[index + 1] = value;
+      pixels[index + 2] = value;
+      pixels[index + 3] = 255u;
+    }
+  }
+
   return {
       .format = stippling::PixelFormat::rgba8,
-      .width = 3,
-      .height = 3,
-      .pixels = std::vector<std::uint8_t>{
-          0,   0,   0,   255, 255, 255, 255, 255, 64,  64,  64,  255,
-          255, 255, 255, 255, 32,  32,  32,  255, 255, 255, 255, 255,
-          0,   0,   0,   255, 255, 255, 255, 255, 96,  96,  96,  255,
-      },
+      .width = kWidth,
+      .height = kHeight,
+      .pixels = std::move(pixels),
   };
 }
 
@@ -23,10 +40,10 @@ stippling::EngineConfig make_engine_config() {
   return {
       .population_size = 12,
       .mutation_rate = 0.2,
-      .dot_count = 16,
-      .elitism_ratio = 0.5,
+      .dot_count = 24,
+      .elitism_ratio = 0.2,
       .seed = 1337,
-      .generations_per_batch = 2,
+      .generations_per_batch = 1,
   };
 }
 
@@ -51,14 +68,21 @@ int main() {
   assert(initial_right.generation == 0);
   assert(initial_left.best_fitness == initial_right.best_fitness);
   assert(initial_left.best_squared_error == initial_right.best_squared_error);
+  assert(left.capabilities().multiscale);
+  assert(right.capabilities().multiscale);
 
-  const auto progressed_left = left.evolve_batch();
-  const auto progressed_right = right.evolve_batch();
+  for (std::uint32_t generation = 1; generation <= 6; ++generation) {
+    const auto progressed_left = left.evolve_batch();
+    const auto progressed_right = right.evolve_batch();
 
-  assert(progressed_left.generation == 2);
-  assert(progressed_right.generation == 2);
-  assert(progressed_left.best_fitness == progressed_right.best_fitness);
-  assert(progressed_left.best_squared_error == progressed_right.best_squared_error);
+    assert(progressed_left.generation == generation);
+    assert(progressed_right.generation == generation);
+    assert(progressed_left.best_fitness == progressed_right.best_fitness);
+    assert(progressed_left.best_squared_error == progressed_right.best_squared_error);
+  }
+
+  assert(left.validate_optimizer().valid);
+  assert(right.validate_optimizer().valid);
   assert(left.best_dots().size() == right.best_dots().size());
   assert(!left.best_dots().empty());
   assert(left.best_dots().front().x == right.best_dots().front().x);

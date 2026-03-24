@@ -112,15 +112,35 @@ class Engine {
       int scale = 1) const;
   [[nodiscard]] QualityMetrics best_quality_metrics() const;
 
-  [[nodiscard]] std::string status_string() const;
+ [[nodiscard]] std::string status_string() const;
 
  private:
+  struct PyramidLevel {
+    int width{0};
+    int height{0};
+    std::vector<std::uint8_t> target{};
+    std::vector<double> importance{};
+  };
+
   EngineCapabilities capabilities_{};
   EngineConfig config_{};
   ImageBuffer image_{};
   TargetStats target_stats_{};
+  std::vector<std::uint8_t> optimizer_target_{};
+  std::vector<double> importance_map_{};
+  std::vector<PyramidLevel> pyramid_{};
+  std::size_t current_level_index_{0};
+  std::uint32_t total_generations_{0};
   std::unique_ptr<Optimizer> optimizer_{};
+  mutable std::vector<Dot> projected_best_dots_{};
   EngineStatus status_{EngineStatus::booting};
+
+  [[nodiscard]] std::vector<Dot> project_dots_to_image_space(
+      const std::vector<Dot>& dots,
+      int source_width,
+      int source_height) const;
+  void initialize_level_optimizer(const std::vector<Dot>& seed_dots);
+  void maybe_promote_level();
 };
 
 [[nodiscard]] std::string to_string(EngineStatus status);

@@ -22,7 +22,14 @@ class Optimizer {
   Optimizer(int width,
             int height,
             std::vector<std::uint8_t> target,
+            std::vector<double> importance,
             const EngineConfig& config);
+  Optimizer(int width,
+            int height,
+            std::vector<std::uint8_t> target,
+            std::vector<double> importance,
+            const EngineConfig& config,
+            std::vector<Dot> seed_dots);
 
   void initialize();
   OptimizerProgress evolve_batch();
@@ -31,6 +38,8 @@ class Optimizer {
   [[nodiscard]] const std::vector<Dot>& best_dots() const;
   [[nodiscard]] OptimizerProgress progress() const noexcept;
   [[nodiscard]] OptimizerValidation validate_incremental_state() const;
+  [[nodiscard]] bool ready_to_promote_for_multiscale() const noexcept;
+  [[nodiscard]] std::uint32_t stagnation_generations() const noexcept;
 
  private:
   struct Candidate {
@@ -57,6 +66,8 @@ class Optimizer {
   int height_;
   EngineConfig config_;
   std::vector<std::uint8_t> target_;
+  std::vector<double> importance_;
+  std::vector<Dot> seed_dots_{};
   std::vector<Candidate> population_{};
   OptimizerProgress progress_{};
   mutable RandomGenerator random_;
@@ -73,15 +84,21 @@ class Optimizer {
   void update_candidate_fitness(Candidate& candidate) const;
   void refresh_progress();
   void update_search_state();
+  void apply_restart_strategy_if_needed();
   std::vector<Candidate> preserve_elites(std::uint32_t elite_count) const;
+  void refine_elites(std::vector<Candidate>* elites);
   Candidate make_child(const Candidate& parent_a, const Candidate& parent_b);
-  const Candidate& select_parent();
+  const Candidate& select_parent(std::size_t island_index);
+  void migrate_islands();
   std::size_t sample_target_index();
   double adaptive_mutation_rate() const;
   double mutation_distance_scale() const;
   Dot guided_dot();
   double dot_target_score(const Dot& dot) const;
   Dot random_dot();
+  Dot local_search_dot(const Dot& dot, double distance_scale, double radius_scale);
+  std::size_t find_replacement_index(const Candidate& child, const Dot& proposal) const;
+  void refine_candidate(Candidate* candidate, std::uint32_t attempts);
   void mutate(Candidate& candidate);
 };
 
