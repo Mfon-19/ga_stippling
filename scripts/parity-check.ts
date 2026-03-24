@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -49,10 +57,11 @@ const PROCESSING_CONFIG: TargetProcessingConfig = {
   threshold: CONFIG.IMAGE.DEFAULT_THRESHOLD,
   maxDotCount: CONFIG.IMAGE.MAX_DOT_COUNT,
 };
-const FIXTURE_PATHS = [
-  path.join(REPO_ROOT, "fixtures", "regression", "cross.pgm"),
-  path.join(REPO_ROOT, "fixtures", "regression", "bands.ppm"),
-];
+const REGRESSION_FIXTURE_DIRECTORY = path.join(
+  REPO_ROOT,
+  "fixtures",
+  "regression"
+);
 const RUN_CONFIG_BASE = {
   populationSize: 24,
   mutationRate: 0.2,
@@ -64,6 +73,27 @@ const RUN_CONFIG_BASE = {
 } satisfies Omit<EngineRunConfig, "dotCount">;
 const GENERATIONS = 5;
 const EXPORT_SCALE = 3;
+const NETPBM_EXTENSIONS = new Set([".pgm", ".ppm", ".pnm"]);
+
+function collectFixtureFiles(directory: string): string[] {
+  return readdirSync(directory)
+    .filter((entry) =>
+      NETPBM_EXTENSIONS.has(path.extname(entry).toLowerCase())
+    )
+    .sort()
+    .map((entry) => path.join(directory, entry));
+}
+
+function expandFixtureInputs(argumentsList: string[]): string[] {
+  return argumentsList.flatMap((fixturePath) => {
+    const resolvedPath = path.isAbsolute(fixturePath)
+      ? fixturePath
+      : path.join(REPO_ROOT, fixturePath);
+    return statSync(resolvedPath).isDirectory()
+      ? collectFixtureFiles(resolvedPath)
+      : [resolvedPath];
+  });
+}
 
 function serializeImageData(imageData: ImageData): SerializedImageBuffer {
   return {
@@ -195,14 +225,11 @@ async function runParityForImage(imagePath: string): Promise<ParityImageResult> 
 }
 
 async function main(): Promise<void> {
+  const explicitFixtures = process.argv.slice(2);
   const fixturePaths =
-    process.argv.length > 2
-      ? process.argv.slice(2).map((fixturePath) =>
-          path.isAbsolute(fixturePath)
-            ? fixturePath
-            : path.join(REPO_ROOT, fixturePath)
-        )
-      : FIXTURE_PATHS;
+    explicitFixtures.length > 0
+      ? expandFixtureInputs(explicitFixtures)
+      : collectFixtureFiles(REGRESSION_FIXTURE_DIRECTORY);
   const results: ParityImageResult[] = [];
 
   for (const fixturePath of fixturePaths) {

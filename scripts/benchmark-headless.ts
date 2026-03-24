@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import { GeneticAlgorithm } from "../src/core/GeneticAlgorithm";
@@ -106,6 +112,32 @@ const IDENTITY_PROCESSING_CONFIG: TargetProcessingConfig = {
   threshold: CONFIG.IMAGE.DEFAULT_THRESHOLD,
   maxDotCount: CONFIG.IMAGE.MAX_DOT_COUNT,
 };
+const REGRESSION_FIXTURE_DIRECTORY = path.join(
+  REPO_ROOT,
+  "fixtures",
+  "regression"
+);
+const NETPBM_EXTENSIONS = new Set([".pgm", ".ppm", ".pnm"]);
+
+function collectFixtureFiles(directory: string): string[] {
+  return readdirSync(directory)
+    .filter((entry) =>
+      NETPBM_EXTENSIONS.has(path.extname(entry).toLowerCase())
+    )
+    .sort()
+    .map((entry) => path.join(directory, entry));
+}
+
+function expandFixtureInputs(argumentsList: string[]): string[] {
+  return argumentsList.flatMap((fixturePath) => {
+    const resolvedPath = path.isAbsolute(fixturePath)
+      ? fixturePath
+      : path.join(REPO_ROOT, fixturePath);
+    return statSync(resolvedPath).isDirectory()
+      ? collectFixtureFiles(resolvedPath)
+      : [resolvedPath];
+  });
+}
 
 function serializeImageData(imageData: ImageDataLike): SerializedImageBuffer {
   return {
@@ -531,25 +563,13 @@ function printReport(reportPath: string, report: JsonReport): void {
 
 async function main(): Promise<void> {
   const explicitFixtures = process.argv.slice(2);
-  const defaultFixtures = [
-    "jobs.jpeg",
-    "landscape.avif",
-    "fixtures/regression/cross.pgm",
-    "fixtures/regression/bands.ppm",
-  ]
+  const defaultFixtures = ["jobs.jpeg", "landscape.avif"]
     .map((name) => path.join(REPO_ROOT, name))
-    .filter((candidate, index) => existsSync(candidate) && index < 2 ? true : false);
-  const fallbackFixtures = [
-    path.join(REPO_ROOT, "fixtures", "regression", "cross.pgm"),
-    path.join(REPO_ROOT, "fixtures", "regression", "bands.ppm"),
-  ];
+    .filter((candidate) => existsSync(candidate));
+  const fallbackFixtures = collectFixtureFiles(REGRESSION_FIXTURE_DIRECTORY);
   const fixturePaths =
     explicitFixtures.length > 0
-      ? explicitFixtures.map((fixturePath) =>
-          path.isAbsolute(fixturePath)
-            ? fixturePath
-            : path.join(REPO_ROOT, fixturePath)
-        )
+      ? expandFixtureInputs(explicitFixtures)
       : defaultFixtures.length > 0
         ? defaultFixtures
         : fallbackFixtures;

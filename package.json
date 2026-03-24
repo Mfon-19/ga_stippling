@@ -6,7 +6,7 @@
   "scripts": {
     "benchmark": "npm run build:wasm && ./scripts/run-benchmark.sh",
     "benchmark:compare": "node ./scripts/compare-benchmarks.mjs",
-    "benchmark:fixtures": "npm run build:wasm && ./scripts/run-benchmark.sh fixtures/regression/cross.pgm fixtures/regression/bands.ppm",
+    "benchmark:fixtures": "npm run build:wasm && ./scripts/run-benchmark.sh fixtures/regression",
     "build:wasm": "./scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && tsc && vite build",

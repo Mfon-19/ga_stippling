@@ -150,6 +150,19 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - CI now runs fixture benchmark smoke tests
    - CI now runs native/WASM parity validation on tracked fixtures
    - incremental-fitness validation is exercised through the CLI parity path using `--validate`
+20. Browser export controls
+   - browser UI now exposes SVG, PNG, and timelapse export actions through the worker-backed WASM path
+   - worker exports remain available after stopping a run so users can export the last converged result
+   - export buttons stay disabled when the engine falls back to the TypeScript backend
+21. Multiscale and search-strategy expansion
+   - native engine now builds a fixed-resolution pyramid (`1/8 -> 1/4 -> 1/2 -> 1x`) and promotes runs across levels
+   - projected best-dot snapshots now stay meaningful even before the optimizer reaches full resolution
+   - search heuristics now include island-aware parent selection, local search on elites, and restart logic for stagnant populations
+22. Richer preprocessing and fixture expansion
+   - preprocessing now uses a separable blur plus edge and local-structure signals to build an importance map
+   - recommended dot counts now come from accumulated importance mass instead of black-pixel counts alone
+   - regression coverage now includes portrait-like, sparse, edge-heavy, and higher-detail tracked fixtures
+   - benchmark and parity scripts now accept fixture directories and auto-discover tracked Netpbm fixtures
 
 ### Current State
 
@@ -157,21 +170,21 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The browser build now has a reproducible Emscripten path and emits a generated native module under `src/wasm/generated/`.
 - The native C++ engine now has a real target-preparation API, a JS-friendly C ABI, and a browser-consumable WASM wrapper.
 - The native optimizer now performs incremental raster/error updates during crossover and mutation instead of recomputing every child from a full redraw.
-- The native search loop is no longer purely naive: it now uses guided seeding, tournament-style selection, and adaptive mutation pressure when progress stalls.
+- The native search loop now uses multiscale promotion, guided seeding, island-aware parent selection, adaptive mutation pressure, local refinement, and restart logic.
 - The native CLI, C ABI, and browser worker can all read best-dot snapshots from the same engine surface.
 - The native export surface now supports SVG and PNG output, and both the CLI and the browser worker build on that same surface.
-- Fixture-based smoke benchmarks, report comparison tooling, and native/WASM parity validation are now in place.
+- The browser UI now exposes the new export path directly instead of leaving it as a programmatic-only worker feature.
+- Fixture-based smoke benchmarks, report comparison tooling, and native/WASM parity validation now run against a broader tracked regression pack instead of only two smoke fixtures.
 - Basic CI now validates the current browser and native codepaths on every push and pull request.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
-- Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
+- Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline that now includes separable blur, edge response, local structure, and importance-map scoring.
 
 ### Remaining High-Priority Work
 
-1. Add multiscale optimization and stronger search heuristics.
-2. Replace the current threshold-only target preparation with richer preprocessing and importance maps.
-3. Expand exports beyond current SVG/PNG/animated-SVG support into richer batch pipelines and possibly raster video output.
-4. Add explicit browser UI controls for the new export capabilities.
-5. Deepen regression coverage with more fixture families and quality thresholds over time.
+1. Tune multiscale schedules and dot-allocation heuristics against larger real-photo fixtures such as `jobs.jpeg` and `landscape.avif`.
+2. Expand exports beyond current SVG/PNG/animated-SVG support into richer raster-video or snapshot-pack workflows.
+3. Add explicit quality thresholds and golden-output expectations to CI instead of smoke-only parity checks.
+4. Continue documenting the native optimizer internals, especially around projected dots, tie-breaking, and restart behavior.
 
 ## Delivery Phases
 
