@@ -32,11 +32,7 @@ export class EventHandlers {
 
   constructor(canvasManager: CanvasManager, elements: UIElements) {
     this.canvasManager = canvasManager;
-    this.imageProcessor = new ImageProcessor(
-      this.canvasManager.getBWContext(),
-      0,
-      0
-    );
+    this.imageProcessor = new ImageProcessor(0, 0);
     this.elements = elements;
     this.state = {
       currentImage: null,

@@ -8,12 +8,10 @@ export interface ImageStats {
 }
 
 export class ImageProcessor {
-  private ctx: CanvasRenderingContext2D;
   private width: number;
   private height: number;
 
-  constructor(ctx: CanvasRenderingContext2D, width: number, height: number) {
-    this.ctx = ctx;
+  constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
   }
@@ -153,21 +151,6 @@ export class ImageProcessor {
   }
 
   /**
-   * Updates the canvas with new image data
-   * @param imageData The image data to draw
-   */
-  public updateCanvas(imageData: ImageData): void {
-    this.ctx.putImageData(imageData, 0, 0);
-  }
-
-  /**
-   * Clears the canvas
-   */
-  public clearCanvas(): void {
-    this.ctx.clearRect(0, 0, this.width, this.height);
-  }
-
-  /**
    * Resizes the processor dimensions
    * @param width New width
    * @param height New height
@@ -175,16 +158,5 @@ export class ImageProcessor {
   public resize(width: number, height: number): void {
     this.width = width;
     this.height = height;
-  }
-
-  /**
-   * Gets the current dimensions of the processor
-   * @returns Object containing width and height
-   */
-  public getDimensions(): { width: number; height: number } {
-    return {
-      width: this.width,
-      height: this.height,
-    };
   }
 }

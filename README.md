@@ -12,6 +12,10 @@ This application transforms regular images into stippled art by:
 
 The result is a stylized version of the image composed entirely of dots (stipples), reminiscent of pointillist art.
 
+## Roadmap
+
+The active migration roadmap lives in [`docs/cpp-wasm-migration-plan.md`](./docs/cpp-wasm-migration-plan.md). It covers the planned C++/WASM engine split, worker architecture, performance upgrades, exports, benchmarking, and code-commenting standards for the rewrite.
+
 ## Features
 
 - **Image Processing**: Convert images to black and white with adjustable blur and threshold
@@ -82,7 +86,7 @@ For best results:
 
 The application is built with TypeScript and follows a modular architecture:
 
-```
+```text
 src/
 ├── core/           # Genetic algorithm implementation
 │   ├── Dot.ts      # Individual dot representation
@@ -95,8 +99,6 @@ src/
 ├── utils/          # Utility functions
 │   ├── config.ts   # Configuration constants
 │   └── ImageProcessor.ts # Image manipulation functions
-├── types/          # TypeScript type definitions
-│   └── index.ts    # Interface definitions
 └── main.ts         # Application entry point
 ```
 
@@ -139,6 +141,7 @@ The compiled files will be in the `dist` directory.
 - **Vite**: For fast development and optimization
 - **Canvas API**: For image processing and rendering
 - **Modular Design**: For better separation of concerns
+- **Docs**: The `docs/` folder tracks the C++/WASM migration plan and related design notes
 
 ## Future Development
 

@@ -1,12 +1,10 @@
 import { CANVAS_IDS } from "../utils/config";
 
 export class CanvasManager {
-  private mainCanvas!: HTMLCanvasElement;
   private imgCanvas!: HTMLCanvasElement;
   private bwCanvas!: HTMLCanvasElement;
   private evolCanvas!: HTMLCanvasElement;
 
-  private mainCtx!: CanvasRenderingContext2D;
   private imgCtx!: CanvasRenderingContext2D;
   private bwCtx!: CanvasRenderingContext2D;
   private evolCtx!: CanvasRenderingContext2D;
@@ -16,9 +14,6 @@ export class CanvasManager {
   }
 
   private initializeCanvases() {
-    this.mainCanvas = document.getElementById(
-      CANVAS_IDS.MAIN
-    ) as HTMLCanvasElement;
     this.imgCanvas = document.getElementById(
       CANVAS_IDS.IMAGE
     ) as HTMLCanvasElement;
@@ -29,7 +24,6 @@ export class CanvasManager {
       CANVAS_IDS.EVOLUTION
     ) as HTMLCanvasElement;
 
-    this.mainCtx = this.getContext(this.mainCanvas, true);
     this.imgCtx = this.getContext(this.imgCanvas);
     this.bwCtx = this.getContext(this.bwCanvas);
     this.evolCtx = this.getContext(this.evolCanvas);
@@ -45,16 +39,10 @@ export class CanvasManager {
   }
 
   public resizeCanvases(width: number, height: number) {
-    [this.mainCanvas, this.imgCanvas, this.bwCanvas, this.evolCanvas].forEach(
-      (canvas) => {
-        canvas.width = width;
-        canvas.height = height;
-      }
-    );
-  }
-
-  public getMainContext() {
-    return this.mainCtx;
+    [this.imgCanvas, this.bwCanvas, this.evolCanvas].forEach((canvas) => {
+      canvas.width = width;
+      canvas.height = height;
+    });
   }
   public getImageContext() {
     return this.imgCtx;

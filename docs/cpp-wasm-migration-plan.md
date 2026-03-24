@@ -1,0 +1,287 @@
+# C++/WASM Stippling Engine Migration Plan
+
+## Goal
+
+Turn the current browser-only TypeScript stippling prototype into a more serious engineering project by:
+
+- moving compute-heavy work into a C++ core
+- compiling that core to WebAssembly for the browser
+- running the optimizer inside a Web Worker
+- improving the algorithm and data layout instead of just porting the current implementation line-for-line
+- reusing the same C++ engine for a native CLI, benchmarks, and export workflows
+
+The objective is not "rewrite everything in C++." The objective is to keep the browser app thin and move the right responsibilities into a worker-hosted C++ engine.
+
+## Target Architecture
+
+### High-level split
+
+- TypeScript owns UI, file input, canvas presentation, and browser integration.
+- A dedicated Web Worker owns long-running optimization work.
+- The optimization engine, preprocessing, rasterization, fitness evaluation, and multiscale logic live in C++.
+- The C++ core is compiled to WebAssembly for the browser and also built as a native CLI for batch and benchmark workflows.
+
+### Browser responsibilities
+
+- upload and validate images
+- display original, processed, and best-current outputs
+- send configuration to the worker
+- throttle preview rendering and progress updates
+- expose export controls and benchmark views
+
+### Worker responsibilities
+
+- initialize the WASM module
+- load image/configuration data into the engine
+- run generations without blocking the UI thread
+- stream progress, metrics, and snapshots back to the UI
+- execute exports that depend on engine state
+
+### C++ engine responsibilities
+
+- preprocessing and importance-map generation
+- target pyramid creation for multiscale optimization
+- population storage and mutation/crossover logic
+- incremental raster/fitness bookkeeping
+- deterministic random number generation
+- snapshot serialization for export, timelapse, and regression testing
+
+## Repository Layout
+
+```text
+/Users/mfonudoh/Desktop/Programs/stippling
+├── cpp/
+│   ├── engine/        # Shared C++ core for WASM + native CLI
+│   ├── cli/           # Native batch runner / exporters / benchmark entrypoint
+│   └── tests/         # C++ unit and regression tests
+├── docs/              # Design docs, migration notes, benchmark reports
+├── src/
+│   ├── ui/            # Browser controls and canvas rendering
+│   ├── worker/        # Worker entrypoint and message handling
+│   └── wasm/          # TS wrapper around the generated WASM module
+├── benchmarks/        # Benchmark inputs, configs, and generated reports
+├── fixtures/          # Sample inputs and golden outputs
+└── .github/workflows/ # CI for TS, WASM, native CLI, and benchmarks
+```
+
+## Delivery Phases
+
+### Phase 1: Cleanup and Baseline
+
+Purpose: make the repo look intentional before major migration work begins.
+
+Deliverables:
+
+- fix README drift, including references to folders that do not exist
+- remove dead code from the current TypeScript app
+- define a versioned configuration schema for runs
+- add a small set of benchmark fixture images
+- capture baseline metrics from the current TypeScript implementation
+
+Notes:
+
+- This phase should establish the "before" state for performance and quality.
+- The current hotspots are the full fitness recomputation in `src/core/Population.ts` and the main-thread animation loop in `src/ui/EventHandlers.ts`.
+
+### Phase 2: Worker Protocol and WASM Build Skeleton
+
+Purpose: define stable integration boundaries before the heavy port begins.
+
+Deliverables:
+
+- create a worker message protocol with messages such as `init`, `loadImage`, `start`, `pause`, `resume`, `step`, `snapshot`, `exportSvg`, `exportPng`, and `benchmark`
+- set up a CMake-based C++ project
+- set up Emscripten build output for the browser
+- add a minimal TypeScript wrapper for loading the WASM module
+- prove the worker can initialize the engine and round-trip simple data
+
+Important design rule:
+
+- Keep the JS/WASM boundary coarse. Transfer image buffers once, run many generations per worker tick, and send compact progress back.
+
+### Phase 3: Minimal C++ Engine Parity
+
+Purpose: replace the TypeScript optimizer path with a functioning worker-hosted C++ engine.
+
+Deliverables:
+
+- port image preprocessing into C++
+- port target representation into C++
+- port dot storage, mutation, rasterization, and fitness evaluation into C++
+- expose a plain C ABI for the browser wrapper
+- run one image end-to-end through worker + WASM in the browser
+- build the same engine natively for a simple CLI proof of concept
+
+Important design rule:
+
+- Do not recreate the current TypeScript object model one class at a time. Use data-oriented arrays for cache locality and predictable memory behavior.
+
+### Phase 4: Incremental Fitness
+
+Purpose: replace the current full-raster full-population recompute with a materially stronger fitness engine.
+
+Deliverables:
+
+- store per-individual coverage or occupancy state
+- cache an error score per individual
+- track dirty regions caused by mutation
+- update only affected pixels when dots move, change radius, or are inserted/removed
+- add correctness tests comparing incremental updates against full recomputation
+
+Implementation direction:
+
+- Each individual should own a buffer that can be updated locally when a mutation occurs.
+- The engine should support a fallback full recompute path for validation and debugging.
+
+### Phase 5: Multiscale Optimization
+
+Purpose: improve convergence speed and make the system more sophisticated than a brute-force single-scale search.
+
+Deliverables:
+
+- build a multiscale target pyramid in C++
+- run evolution at low resolution first
+- project elites upward to higher resolutions
+- scale and jitter dots between levels
+- expose scale-by-scale progress in the worker/UI
+
+Suggested first schedule:
+
+- `1/8 -> 1/4 -> 1/2 -> 1x`
+
+### Phase 6: Search Strategy Upgrades
+
+Purpose: replace simplistic search logic with a more defensible optimization system.
+
+Deliverables:
+
+- importance-weighted initialization from the target image / importance map
+- adaptive mutation schedules based on stagnation and recent improvement
+- local search or hill-climbing on top elites
+- island populations with periodic migration or restart strategies
+- configurable exploration vs exploitation controls
+
+Replace:
+
+- the current center-pixel crossover heuristic with a richer selection and local-improvement strategy
+
+### Phase 7: Better Preprocessing and Dot Density Control
+
+Purpose: improve how target structure is converted into stipple priorities.
+
+Deliverables:
+
+- replace naive box blur with a stronger method such as separable Gaussian blur or integral-image blur
+- compute gradient magnitude or edge-aware structure measures
+- build an importance map from darkness, local structure, and reconstruction error
+- derive dot count and initial dot distribution from importance mass rather than black-pixel percentage alone
+
+Important outcome:
+
+- Dot placement should be driven by image structure, not just thresholded darkness.
+
+### Phase 8: Measurability and Reproducibility
+
+Purpose: make the project demonstrably engineering-driven rather than visually interesting only.
+
+Deliverables:
+
+- seeded RNG for reproducible runs
+- per-generation timing and stage timing
+- memory tracking
+- convergence history
+- quality metrics such as MSE and SSIM
+- saved run configurations and result snapshots
+- benchmark mode in both browser and CLI
+
+Outputs:
+
+- machine-readable benchmark JSON
+- saved image snapshots for regression comparison
+- reproducible seed/config pairs for demos and performance claims
+
+### Phase 9: Outputs That Matter
+
+Purpose: turn the engine into a useful tool, not just an interactive demo.
+
+Deliverables:
+
+- SVG export
+- high-resolution PNG export
+- timelapse generation
+- batch/CLI mode for processing folders
+- snapshot save/load support for long runs
+
+Why this matters:
+
+- The CLI plus export pipeline gives the C++ engine value outside the browser, which justifies the architecture.
+
+### Phase 10: Tests, CI, and Final Repo Sharpness
+
+Purpose: make the system look finished and trustworthy.
+
+Deliverables:
+
+- C++ unit tests for rasterization, mutation, importance-map generation, and incremental fitness
+- regression tests against golden outputs
+- TypeScript tests for worker protocol and UI integration boundaries
+- GitHub Actions for web build, WASM build, native CLI build, tests, and benchmark smoke runs
+- documented developer setup for both browser and native builds
+
+## Commenting and Documentation Standard
+
+This needs to be explicit in the plan: the new code should be understandable to someone who did not write it.
+
+Rules:
+
+- Add comments for non-obvious logic, invariants, and performance-sensitive decisions.
+- Do not add noise comments that restate the next line.
+- Add short module-level comments at the top of major C++ files to explain purpose and ownership.
+- Document worker message types and payload semantics clearly in TypeScript.
+- Document memory ownership and lifetime rules at the JS/WASM boundary.
+- Add comments around incremental-fitness bookkeeping, dirty-region updates, multiscale transitions, and any heuristic schedules.
+- Public C++ APIs and exported WASM functions should have concise doc comments describing inputs, outputs, and constraints.
+- Keep comments current when behavior changes. Stale comments are worse than missing comments.
+
+Places where comments matter most:
+
+- rasterization and incremental update logic
+- importance-map generation
+- mutation and local-search heuristics
+- island migration and restart strategy
+- snapshot/export serialization
+- benchmark and metric collection
+
+## C++ Design Rules
+
+- Prefer structure-of-arrays over object-heavy layouts.
+- Use fixed-width numeric types where appropriate.
+- Make RNG deterministic and seedable.
+- Keep buffers contiguous and reuse memory aggressively.
+- Avoid unnecessary copies across the JS/WASM boundary.
+- Start with single-threaded WASM first; add SIMD and threads later only after measurement.
+- If threading is added later, document required cross-origin isolation constraints for browser deployment.
+
+## Acceptance Criteria
+
+The migration is successful when:
+
+- the UI stays responsive during optimization
+- the worker-hosted WASM path clearly outperforms the current TypeScript baseline
+- the same seed and config produce the same output in browser and CLI
+- multiscale mode converges faster than single-scale mode on benchmark inputs
+- incremental fitness matches full recompute correctness checks
+- SVG, PNG, and timelapse exports work from saved snapshots
+- the repo has tests, CI, fixtures, and cleaned-up documentation
+- a new engineer can read the code and understand the critical paths without reverse-engineering everything
+
+## Suggested First Milestone
+
+The best first milestone is:
+
+1. clean up the repo and baseline it
+2. define the worker protocol
+3. stand up the C++/WASM build skeleton
+4. implement a minimal deterministic engine parity path
+
+That gives the project a stable foundation before the harder work begins on incremental fitness, multiscale optimization, and advanced search strategies.
