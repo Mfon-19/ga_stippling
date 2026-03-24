@@ -1,5 +1,9 @@
 import { CANVAS_IDS } from "../utils/config";
 
+/**
+ * Small DOM helper that owns the three canvas elements used by the browser UI:
+ * original image, processed target preview, and live evolution preview.
+ */
 export class CanvasManager {
   private imgCanvas!: HTMLCanvasElement;
   private bwCanvas!: HTMLCanvasElement;
@@ -13,6 +17,7 @@ export class CanvasManager {
     this.initializeCanvases();
   }
 
+  /** Resolves the three canvases and their 2D contexts from the DOM. */
   private initializeCanvases() {
     this.imgCanvas = document.getElementById(
       CANVAS_IDS.IMAGE
@@ -38,18 +43,25 @@ export class CanvasManager {
     return ctx;
   }
 
+  /** Keeps all canvases in the same image coordinate space. */
   public resizeCanvases(width: number, height: number) {
     [this.imgCanvas, this.bwCanvas, this.evolCanvas].forEach((canvas) => {
       canvas.width = width;
       canvas.height = height;
     });
   }
+
+  /** Returns the original-image canvas context. */
   public getImageContext() {
     return this.imgCtx;
   }
+
+  /** Returns the processed-target canvas context. */
   public getBWContext() {
     return this.bwCtx;
   }
+
+  /** Returns the evolution-preview canvas context. */
   public getEvolContext() {
     return this.evolCtx;
   }

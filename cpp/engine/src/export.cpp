@@ -1,5 +1,15 @@
 #include "stippling/engine/export.hpp"
 
+// export.cpp implements the engine's rendering and artifact-output helpers.
+//
+// At a high level, this file is responsible for:
+// - rendering dot sets back into binary grayscale or RGBA rasters
+// - serializing current results as SVG, animated SVG timelapses, and PNG
+// - computing simple quality metrics against a target raster
+//
+// These exports intentionally stay close to the native engine so the browser
+// worker, native CLI, and parity tests all consume the same artifact logic.
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -20,6 +30,7 @@ constexpr std::array<std::uint8_t, 8> kPngSignature{
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 };
 
+/** Validates and normalizes export scale values. */
 std::uint32_t clamp_scale(int scale) {
   if (scale <= 0) {
     throw std::invalid_argument("Export scale must be positive");
@@ -28,6 +39,7 @@ std::uint32_t clamp_scale(int scale) {
   return static_cast<std::uint32_t>(scale);
 }
 
+/** Computes a PNG chunk CRC over the chunk type and payload bytes. */
 std::uint32_t crc32(std::string_view type, const std::vector<std::uint8_t>& data) {
   std::uint32_t crc = 0xffffffffu;
   auto update = [&crc](std::uint8_t byte) {
@@ -46,6 +58,7 @@ std::uint32_t crc32(std::string_view type, const std::vector<std::uint8_t>& data
   return crc ^ 0xffffffffu;
 }
 
+/** Computes the Adler-32 checksum required by the zlib payload wrapper. */
 std::uint32_t adler32(const std::vector<std::uint8_t>& data) {
   std::uint32_t a = 1u;
   std::uint32_t b = 0u;
@@ -58,6 +71,7 @@ std::uint32_t adler32(const std::vector<std::uint8_t>& data) {
   return (b << 16u) | a;
 }
 
+/** Appends a 32-bit unsigned integer in big-endian byte order. */
 void append_u32_be(std::vector<std::uint8_t>* output, std::uint32_t value) {
   output->push_back(static_cast<std::uint8_t>((value >> 24u) & 0xffu));
   output->push_back(static_cast<std::uint8_t>((value >> 16u) & 0xffu));
@@ -65,6 +79,7 @@ void append_u32_be(std::vector<std::uint8_t>* output, std::uint32_t value) {
   output->push_back(static_cast<std::uint8_t>(value & 0xffu));
 }
 
+/** Appends one PNG chunk, including size, type, payload, and CRC. */
 void append_chunk(std::vector<std::uint8_t>* output,
                   std::string_view type,
                   const std::vector<std::uint8_t>& data) {
@@ -74,6 +89,10 @@ void append_chunk(std::vector<std::uint8_t>* output,
   append_u32_be(output, crc32(type, data));
 }
 
+/**
+ * Wraps raw RGBA rows into a minimal zlib stream suitable for PNG output. This
+ * intentionally uses stored DEFLATE blocks for simplicity and determinism.
+ */
 std::vector<std::uint8_t> make_png_image_data(const std::vector<std::uint8_t>& rgba,
                                               int width,
                                               int height) {
@@ -114,6 +133,7 @@ std::vector<std::uint8_t> make_png_image_data(const std::vector<std::uint8_t>& r
   return compressed;
 }
 
+/** Encodes an RGBA raster into a minimal PNG byte stream. */
 std::vector<std::uint8_t> encode_png_rgba(const std::vector<std::uint8_t>& rgba,
                                           int width,
                                           int height) {
@@ -141,6 +161,7 @@ std::vector<std::uint8_t> encode_png_rgba(const std::vector<std::uint8_t>& rgba,
   return output;
 }
 
+/** Formats one dot as an SVG `<circle>` element at the requested export scale. */
 std::string format_dot_svg(const Dot& dot, std::uint32_t scale) {
   std::ostringstream stream;
   stream << "<circle cx=\"" << dot.x * static_cast<double>(scale)
@@ -152,6 +173,7 @@ std::string format_dot_svg(const Dot& dot, std::uint32_t scale) {
 
 }  // namespace
 
+/** Renders a dot set into the engine's binary black-on-white grayscale raster. */
 std::vector<std::uint8_t> render_dots_to_grayscale(const std::vector<Dot>& dots,
                                                    int width,
                                                    int height,
@@ -160,9 +182,6 @@ std::vector<std::uint8_t> render_dots_to_grayscale(const std::vector<Dot>& dots,
   RasterGrid grid(width * static_cast<int>(resolved_scale),
                   height * static_cast<int>(resolved_scale));
 
-  // Export rendering stays binary so the PNG/SVG outputs match the optimizer's
-  // own binary target representation rather than adding an unrelated antialiasing
-  // layer on top of the engine.
   for (const auto& dot : dots) {
     grid.draw_dot({
         .x = dot.x * static_cast<double>(resolved_scale),
@@ -174,6 +193,7 @@ std::vector<std::uint8_t> render_dots_to_grayscale(const std::vector<Dot>& dots,
   return grid.pixels();
 }
 
+/** Renders a dot set into an RGBA raster for PNG encoding. */
 std::vector<std::uint8_t> render_dots_to_rgba(const std::vector<Dot>& dots,
                                               int width,
                                               int height,
@@ -190,6 +210,7 @@ std::vector<std::uint8_t> render_dots_to_rgba(const std::vector<Dot>& dots,
   return rgba;
 }
 
+/** Serializes a dot set as a standalone SVG image. */
 std::string export_dots_to_svg(const std::vector<Dot>& dots,
                                int width,
                                int height,
@@ -209,6 +230,7 @@ std::string export_dots_to_svg(const std::vector<Dot>& dots,
   return stream.str();
 }
 
+/** Serializes captured timelapse frames as an animated SVG document. */
 std::string export_timelapse_to_svg(const std::vector<TimelapseFrame>& frames,
                                     int width,
                                     int height,
@@ -247,6 +269,7 @@ std::string export_timelapse_to_svg(const std::vector<TimelapseFrame>& frames,
   return stream.str();
 }
 
+/** Serializes a dot set as a PNG image. */
 std::vector<std::uint8_t> export_dots_to_png(const std::vector<Dot>& dots,
                                              int width,
                                              int height,
@@ -257,6 +280,7 @@ std::vector<std::uint8_t> export_dots_to_png(const std::vector<Dot>& dots,
                          height * static_cast<int>(resolved_scale));
 }
 
+/** Computes basic image-quality metrics between a target raster and a rendering. */
 QualityMetrics compute_quality_metrics(const std::vector<std::uint8_t>& target,
                                        const std::vector<std::uint8_t>& rendered) {
   if (target.size() != rendered.size()) {

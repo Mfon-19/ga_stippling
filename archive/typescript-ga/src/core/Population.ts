@@ -1,6 +1,6 @@
 import { Individual } from "./Individual";
 import { Dot } from "./Dot";
-import { RandomSource } from "../shared/random";
+import { RandomSource } from "../../../../src/shared/random";
 
 export interface PopulationConfig {
   size: number;

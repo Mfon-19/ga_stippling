@@ -1,5 +1,22 @@
 #include "stippling/engine/optimizer.hpp"
 
+// optimizer.cpp implements the native search loop that evolves stipple-dot
+// candidates toward a target image.
+//
+// At a high level, this file is responsible for:
+// - owning the optimizer's deterministic random generator and candidate state
+// - initializing a population from guided, random, or promoted seed dots
+// - scoring candidates against the target with incremental raster/error updates
+// - evolving the population through elitism, crossover, mutation, and local
+//   refinement
+// - tracking stagnation and reacting with adaptive mutation, island migration,
+//   and restart logic
+// - exposing best-solution snapshots, validation, and progress metrics back to
+//   the higher-level Engine orchestration layer
+//
+// The Engine decides when to build pyramids and promote between resolutions.
+// This file focuses on the search performed at one active pyramid level.
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -11,10 +28,16 @@ namespace stippling {
 
 namespace {
 
+/** Returns true when two dots have identical geometry. */
 bool dots_equal(const Dot& left, const Dot& right) {
   return left.x == right.x && left.y == right.y && left.radius == right.radius;
 }
 
+/**
+ * Provides a deterministic total ordering for candidates. Fitness is primary,
+ * but exact ties are broken by error and dot geometry so native and WASM runs
+ * choose the same champion in parity tests.
+ */
 template <typename CandidateLike>
 bool candidate_better(const CandidateLike& left, const CandidateLike& right) {
   constexpr double kFitnessEpsilon = 1e-12;
@@ -44,14 +67,17 @@ bool candidate_better(const CandidateLike& left, const CandidateLike& right) {
   return left.dots.size() < right.dots.size();
 }
 
+/** Clamps an x/y coordinate into the active raster bounds. */
 double clamp_position(double value, int limit) {
   return std::clamp(value, 0.0, static_cast<double>(std::max(0, limit - 1)));
 }
 
+/** Clamps a dot radius into the supported stipple footprint range. */
 double clamp_radius(double value) {
   return std::clamp(value, 0.35, 1.35);
 }
 
+/** Chooses how many migration islands to use for the current population size. */
 std::size_t island_count_for_population(std::size_t population_size) {
   if (population_size >= 48) {
     return 4;
@@ -64,9 +90,11 @@ std::size_t island_count_for_population(std::size_t population_size) {
 
 }  // namespace
 
+/** Seeds the optimizer's deterministic RNG. */
 Optimizer::RandomGenerator::RandomGenerator(std::uint32_t seed)
     : state_(seed) {}
 
+/** Returns the next pseudo-random value in [0, 1). */
 double Optimizer::RandomGenerator::next_unit() {
   state_ += 0x6d2b79f5u;
   auto t = state_;
@@ -75,10 +103,12 @@ double Optimizer::RandomGenerator::next_unit() {
   return static_cast<double>(t ^ (t >> 14)) / 4294967296.0;
 }
 
+/** Returns the next pseudo-random 32-bit integer. */
 std::uint32_t Optimizer::RandomGenerator::next_u32() {
   return static_cast<std::uint32_t>(next_unit() * 4294967295.0);
 }
 
+/** Constructs an optimizer with no promoted seed dots. */
 Optimizer::Optimizer(int width,
                      int height,
                      std::vector<std::uint8_t> target,
@@ -86,6 +116,11 @@ Optimizer::Optimizer(int width,
                      const EngineConfig& config)
     : Optimizer(width, height, std::move(target), std::move(importance), config, {}) {}
 
+/**
+ * Constructs an optimizer for one pyramid level. The target raster and
+ * importance map define the search space; optional seed dots come from a
+ * coarser multiscale level.
+ */
 Optimizer::Optimizer(int width,
                      int height,
                      std::vector<std::uint8_t> target,
@@ -123,6 +158,7 @@ Optimizer::Optimizer(int width,
   build_target_sampler();
 }
 
+/** Initializes the first population and computes its baseline progress state. */
 void Optimizer::initialize() {
   initialize_population();
   evaluate_population();
@@ -131,15 +167,16 @@ void Optimizer::initialize() {
   stagnation_generations_ = 0;
 }
 
+/**
+ * Runs one configured batch of generations. Each generation keeps elites,
+ * refines a few strong candidates locally, breeds the remainder, then updates
+ * migration/stagnation/restart state from the new frontier.
+ */
 OptimizerProgress Optimizer::evolve_batch() {
   ensure_initialized();
 
   for (std::uint32_t batch_index = 0; batch_index < config_.generations_per_batch;
        ++batch_index) {
-    // Each generation keeps the best performers, gives a few elites extra local
-    // refinement, then fills the rest of the population with crossover+mutation
-    // children. Search-state bookkeeping runs after the new population lands so
-    // restart and migration decisions are based on the post-selection frontier.
     const auto elite_count = std::max<std::uint32_t>(
         1u, static_cast<std::uint32_t>(std::floor(
                 static_cast<double>(config_.population_size) *
@@ -174,10 +211,12 @@ OptimizerProgress Optimizer::evolve_batch() {
   return progress_;
 }
 
+/** Reports whether a population has already been initialized. */
 bool Optimizer::initialized() const noexcept {
   return !population_.empty();
 }
 
+/** Returns the current best candidate's dots. */
 const std::vector<Dot>& Optimizer::best_dots() const {
   ensure_initialized();
   const auto best = std::max_element(
@@ -188,10 +227,15 @@ const std::vector<Dot>& Optimizer::best_dots() const {
   return best->dots;
 }
 
+/** Returns the latest cached progress metrics. */
 OptimizerProgress Optimizer::progress() const noexcept {
   return progress_;
 }
 
+/**
+ * Recomputes each candidate from scratch to prove the incremental raster and
+ * squared-error bookkeeping still match the reference implementation.
+ */
 OptimizerValidation Optimizer::validate_incremental_state() const {
   ensure_initialized();
 
@@ -251,6 +295,10 @@ OptimizerValidation Optimizer::validate_incremental_state() const {
   return validation;
 }
 
+/**
+ * Reports whether the current level looks stable enough to promote to a finer
+ * multiscale resolution.
+ */
 bool Optimizer::ready_to_promote_for_multiscale() const noexcept {
   if (!initialized()) {
     return false;
@@ -261,16 +309,23 @@ bool Optimizer::ready_to_promote_for_multiscale() const noexcept {
           progress_.generation >= 6);
 }
 
+/** Returns how many generations have passed without a meaningful improvement. */
 std::uint32_t Optimizer::stagnation_generations() const noexcept {
   return stagnation_generations_;
 }
 
+/** Throws if callers try to evolve or inspect a population before initialization. */
 void Optimizer::ensure_initialized() const {
   if (!initialized()) {
     throw std::logic_error("Optimizer population has not been initialized");
   }
 }
 
+/**
+ * Builds the weighted sampler used for guided seeding and guided mutation.
+ * Darkness dominates, while the importance map adds extra pull toward edges
+ * and local structure.
+ */
 void Optimizer::build_target_sampler() {
   cumulative_target_weights_.clear();
   cumulative_target_weights_.reserve(target_.size());
@@ -279,15 +334,17 @@ void Optimizer::build_target_sampler() {
   for (std::size_t index = 0; index < target_.size(); ++index) {
     const auto darkness = (255.0 - static_cast<double>(target_[index])) / 255.0;
     const auto importance = index < importance_.size() ? importance_[index] : 0.0;
-    // Darkness still dominates because the optimizer is ultimately drawing a
-    // thresholded black-on-white image, but the importance map steers extra
-    // capacity toward edges and local structure.
     const auto weight = std::max(0.0, darkness * 0.65 + importance * 0.35);
     total_target_weight_ += weight;
     cumulative_target_weights_.push_back(total_target_weight_);
   }
 }
 
+/**
+ * Creates the initial population. When seed dots are present, the first
+ * candidate preserves them exactly and the rest fan out nearby to restore
+ * diversity after multiscale promotion.
+ */
 void Optimizer::initialize_population() {
   population_.clear();
   population_.reserve(config_.population_size);
@@ -299,9 +356,6 @@ void Optimizer::initialize_population() {
 
     for (std::uint32_t dot_index = 0; dot_index < config_.dot_count; ++dot_index) {
       if (dot_index < seed_dots_.size()) {
-        // During multiscale promotion the first candidate preserves the exact
-        // projected champion, while the rest of the population fans out around
-        // those seeds to reintroduce diversity at the new level.
         const auto& seed_dot = seed_dots_[dot_index];
         candidate.dots.push_back(candidate_index == 0
                                      ? Dot{
@@ -322,6 +376,7 @@ void Optimizer::initialize_population() {
   }
 }
 
+/** Fully evaluates every candidate in the current population. */
 void Optimizer::evaluate_population() {
   for (auto& candidate : population_) {
     evaluate_candidate(candidate);
@@ -330,6 +385,7 @@ void Optimizer::evaluate_population() {
   refresh_progress();
 }
 
+/** Rasterizes one candidate from scratch and computes its squared error. */
 void Optimizer::evaluate_candidate(Candidate& candidate) const {
   candidate.grid.clear();
   for (const auto& dot : candidate.dots) {
@@ -340,6 +396,7 @@ void Optimizer::evaluate_candidate(Candidate& candidate) const {
   update_candidate_fitness(candidate);
 }
 
+/** Converts squared error into the normalized fitness score used for ranking. */
 void Optimizer::update_candidate_fitness(Candidate& candidate) const {
   const auto max_diff = static_cast<double>(width_) * static_cast<double>(height_) *
                         255.0 * 255.0;
@@ -348,6 +405,7 @@ void Optimizer::update_candidate_fitness(Candidate& candidate) const {
   candidate.fitness = std::sqrt(std::max(0.0, raw_fitness));
 }
 
+/** Refreshes cached best-fitness progress metrics from the current population. */
 void Optimizer::refresh_progress() {
   const auto best = std::max_element(
       population_.begin(), population_.end(),
@@ -358,6 +416,7 @@ void Optimizer::refresh_progress() {
   progress_.best_squared_error = best->squared_error;
 }
 
+/** Updates stagnation tracking after a generation completes. */
 void Optimizer::update_search_state() {
   constexpr double kImprovementEpsilon = 1e-6;
 
@@ -370,6 +429,10 @@ void Optimizer::update_search_state() {
   ++stagnation_generations_;
 }
 
+/**
+ * Replaces part of the weakest tail with champion-informed reseeds once the
+ * run has stalled for long enough.
+ */
 void Optimizer::apply_restart_strategy_if_needed() {
   const auto restart_threshold = std::max<std::uint32_t>(8u, width_ < 96 ? 6u : 10u);
   if (stagnation_generations_ < restart_threshold || population_.size() < 4) {
@@ -391,9 +454,6 @@ void Optimizer::apply_restart_strategy_if_needed() {
     Candidate replacement(width_, height_);
     replacement.dots.reserve(config_.dot_count);
 
-    // Restarts are not blind reseeds. They preserve a slice of the champion and
-    // repopulate the rest from guided/random proposals so the search can escape
-    // a basin without throwing away everything it has learned.
     const auto champion_seed_count = std::min<std::size_t>(
         champion.dots.size(), std::max<std::size_t>(1u, config_.dot_count / 4u));
     for (std::size_t seed_index = 0; seed_index < champion_seed_count; ++seed_index) {
@@ -415,6 +475,7 @@ void Optimizer::apply_restart_strategy_if_needed() {
   last_best_fitness_ = progress_.best_fitness;
 }
 
+/** Returns the best-scoring prefix of the current population. */
 std::vector<Optimizer::Candidate> Optimizer::preserve_elites(
     std::uint32_t elite_count) const {
   auto sorted = population_;
@@ -427,6 +488,7 @@ std::vector<Optimizer::Candidate> Optimizer::preserve_elites(
   return sorted;
 }
 
+/** Applies extra local-search passes to a few top elites before breeding. */
 void Optimizer::refine_elites(std::vector<Candidate>* elites) {
   if (elites == nullptr || elites->empty()) {
     return;
@@ -438,6 +500,10 @@ void Optimizer::refine_elites(std::vector<Candidate>* elites) {
   }
 }
 
+/**
+ * Builds one child by treating the fitter parent as the base candidate and
+ * importing promising local proposals from the secondary parent.
+ */
 Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
                                            const Candidate& parent_b) {
   const auto& primary_parent =
@@ -448,9 +514,6 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
   const auto import_attempts = std::min<std::size_t>(
       std::max<std::size_t>(6u, config_.dot_count / 12u), 24u);
 
-  // Dots do not have stable semantic identities across parents, so crossover
-  // treats the secondary parent as a source of useful local proposals rather
-  // than copying slots one-for-one.
   for (std::size_t attempt = 0; attempt < import_attempts; ++attempt) {
     const auto secondary_index = static_cast<std::size_t>(
         random_.next_u32() % secondary_parent.dots.size());
@@ -486,9 +549,6 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
       child.squared_error = next_error;
       child.dots[replacement_index] = proposal;
     } else {
-      // The raster grid is mutated in-place to get the hypothetical delta, so
-      // rejected proposals must be explicitly reverted to keep candidate state
-      // and squared error in sync.
       (void)child.grid.apply_dot_delta_and_update_error(
           proposal, current_dot, target_, next_error);
     }
@@ -499,14 +559,17 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
   return child;
 }
 
+/**
+ * Chooses a parent with tournament selection. Most tournaments stay within one
+ * island, but the sampling widens as stagnation rises so breakthroughs can
+ * spread across the full population.
+ */
 const Optimizer::Candidate& Optimizer::select_parent(std::size_t island_index) {
   constexpr std::size_t kTournamentSize = 4;
   const auto island_count = island_count_for_population(population_.size());
   const auto island = island_count == 0 ? 0u : island_index % island_count;
   const auto island_start = island * population_.size() / island_count;
   const auto island_end = (island + 1u) * population_.size() / island_count;
-  // Most tournaments stay inside one island. When the run stagnates we widen
-  // the sampling distribution to let successful structures spread globally.
   const auto sample_global = island_count == 1 ||
                              random_.next_unit() <
                                  0.12 + std::min(0.1, stagnation_generations_ * 0.01);
@@ -531,6 +594,7 @@ const Optimizer::Candidate& Optimizer::select_parent(std::size_t island_index) {
   return population_[best_index];
 }
 
+/** Periodically rotates one champion from each island into the next island. */
 void Optimizer::migrate_islands() {
   const auto island_count = island_count_for_population(population_.size());
   if (island_count == 1 || progress_.generation == 0 || progress_.generation % 4 != 0) {
@@ -563,13 +627,11 @@ void Optimizer::migrate_islands() {
 
   for (std::size_t island = 0; island < island_count; ++island) {
     const auto destination_island = (island + 1u) % island_count;
-    // Rotation is deterministic and cheap: each island exports one champion to
-    // the next island's weakest slot, which is enough to share breakthroughs
-    // without collapsing the whole population into a single basin immediately.
     population_[weakest_indices[destination_island]] = champions[island];
   }
 }
 
+/** Samples one target pixel index according to the precomputed target weights. */
 std::size_t Optimizer::sample_target_index() {
   if (total_target_weight_ <= 0.0 || cumulative_target_weights_.empty()) {
     return static_cast<std::size_t>(random_.next_u32() % target_.size());
@@ -586,16 +648,22 @@ std::size_t Optimizer::sample_target_index() {
       std::distance(cumulative_target_weights_.begin(), match));
 }
 
+/** Increases mutation pressure as stagnation rises, up to a fixed cap. */
 double Optimizer::adaptive_mutation_rate() const {
   const auto multiplier =
       1.0 + std::min(2.0, static_cast<double>(stagnation_generations_) * 0.08);
   return std::min(0.75, config_.mutation_rate * multiplier);
 }
 
+/** Widens mutation and local-search step sizes as stagnation rises. */
 double Optimizer::mutation_distance_scale() const {
   return 1.2 + std::min(6.0, static_cast<double>(stagnation_generations_) * 0.45);
 }
 
+/**
+ * Creates a dot near a weighted target location, with jitter so multiple dots
+ * can spread through an important region instead of collapsing onto one pixel.
+ */
 Dot Optimizer::guided_dot() {
   const auto target_index = sample_target_index();
   const auto base_x =
@@ -608,8 +676,6 @@ Dot Optimizer::guided_dot() {
       target_index < importance_.size() ? importance_[target_index] : darkness;
   const auto jitter_scale = 0.85 + importance * 2.5;
 
-  // Guided proposals still include jitter so multiple dots can fan out around a
-  // useful region instead of piling onto a single pixel-center sample.
   return {
       .x = clamp_position(
           base_x + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, width_),
@@ -621,6 +687,7 @@ Dot Optimizer::guided_dot() {
   };
 }
 
+/** Scores how promising one dot location looks against the target and importance map. */
 double Optimizer::dot_target_score(const Dot& dot) const {
   const auto x = static_cast<int>(std::floor(dot.x));
   const auto y = static_cast<int>(std::floor(dot.y));
@@ -636,6 +703,7 @@ double Optimizer::dot_target_score(const Dot& dot) const {
   return darkness * 0.65 + importance * 0.35;
 }
 
+/** Creates an unconstrained random dot anywhere in the current level. */
 Dot Optimizer::random_dot() {
   return {
       .x = std::floor(random_.next_unit() * static_cast<double>(width_)),
@@ -644,6 +712,10 @@ Dot Optimizer::random_dot() {
   };
 }
 
+/**
+ * Searches a small neighborhood around a dot and returns the locally best
+ * proposal according to the dot-level target score.
+ */
 Dot Optimizer::local_search_dot(const Dot& dot,
                                 double distance_scale,
                                 double radius_scale) {
@@ -674,6 +746,10 @@ Dot Optimizer::local_search_dot(const Dot& dot,
   return best_dot;
 }
 
+/**
+ * Chooses which child dot slot to replace during crossover. It prefers an
+ * overlapping neighbor when possible, otherwise a weak nearby dot.
+ */
 std::size_t Optimizer::find_replacement_index(const Candidate& child,
                                               const Dot& proposal) const {
   if (child.dots.empty()) {
@@ -684,9 +760,6 @@ std::size_t Optimizer::find_replacement_index(const Candidate& child,
   auto best_metric = std::numeric_limits<double>::infinity();
   const auto sample_count = std::min<std::size_t>(child.dots.size(), 16u);
 
-  // We only inspect a small random subset to keep crossover cheap. The first
-  // priority is replacing an overlapping neighbor; otherwise we evict a weak dot
-  // that is both low-value and reasonably close to the proposal region.
   for (std::size_t sample = 0; sample < sample_count; ++sample) {
     const auto candidate_index =
         static_cast<std::size_t>(random_.next_u32() % child.dots.size());
@@ -707,14 +780,15 @@ std::size_t Optimizer::find_replacement_index(const Candidate& child,
   return best_index;
 }
 
+/**
+ * Runs a lightweight hill-climbing pass on a candidate by repeatedly
+ * reworking a few weak dots with local or guided proposals.
+ */
 void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
   if (candidate == nullptr || candidate->dots.empty()) {
     return;
   }
 
-  // Local refinement targets a few weak dots per pass. It acts as a lightweight
-  // hill-climber layered on top of the GA so elites do not rely solely on
-  // crossover/mutation to improve obvious local placement mistakes.
   for (std::uint32_t attempt = 0; attempt < attempts; ++attempt) {
     auto index = static_cast<std::size_t>(random_.next_u32() % candidate->dots.size());
     for (std::uint32_t probe = 0; probe < 3; ++probe) {
@@ -742,7 +816,6 @@ void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
       candidate->squared_error = next_error;
       candidate->dots[index] = proposal;
     } else {
-      // As with crossover, refinement proposals use reversible in-place deltas.
       (void)candidate->grid.apply_dot_delta_and_update_error(
           proposal, current_dot, target_, next_error);
     }
@@ -751,6 +824,10 @@ void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
   update_candidate_fitness(*candidate);
 }
 
+/**
+ * Mutates a candidate with a mix of local search, guided reseeding, and random
+ * reseeding. The mix shifts toward broader exploration as stagnation rises.
+ */
 void Optimizer::mutate(Candidate& candidate) {
   const auto mutation_rate = adaptive_mutation_rate();
   const auto distance_scale = mutation_distance_scale();
@@ -764,9 +841,6 @@ void Optimizer::mutate(Candidate& candidate) {
 
     Dot next_dot = dot;
     const auto mutation_mode = random_.next_unit();
-    // The mutation mix shifts from local edits to broader reseeding as
-    // stagnation rises, which gives the same codepath both refinement and
-    // exploration behavior instead of hard-coding separate phases.
     if (mutation_mode < 0.55) {
       next_dot = local_search_dot(dot, distance_scale, radius_scale);
     } else if (mutation_mode < 0.85 && total_target_weight_ > 0.0) {

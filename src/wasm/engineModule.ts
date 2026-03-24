@@ -10,6 +10,13 @@ import {
   TargetStats,
 } from "../shared/engineProtocol";
 
+/**
+ * Browser/WASM bridge for the native engine.
+ *
+ * This file owns the thin ABI layer that allocates memory inside the generated
+ * Emscripten module, copies image/artifact buffers across the JS/WASM boundary,
+ * and exposes a TypeScript-friendly engine interface to the worker backend.
+ */
 const DOT_STRIDE_BYTES = 24;
 
 interface PreparedTargetResult {
@@ -55,6 +62,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Copies image bytes into WASM memory and asks the native engine to preprocess them. */
   public prepareTarget(
     image: SerializedImageBuffer,
     processing: TargetProcessingConfig
@@ -107,6 +115,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Applies one optimizer configuration to the native engine. */
   public configure(config: EngineRunConfig): void {
     this.assertSuccess(
       this.module._stippling_engine_configure_values(
@@ -122,6 +131,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     );
   }
 
+  /** Initializes the native optimizer for the current prepared target. */
   public initializeOptimizer(): void {
     this.assertSuccess(
       this.module._stippling_engine_initialize_optimizer(this.enginePointer),
@@ -129,6 +139,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     );
   }
 
+  /** Advances the native optimizer by one configured batch. */
   public evolveBatch(): OptimizerBatchResult {
     this.assertSuccess(
       this.module._stippling_engine_evolve_batch_in_place(this.enginePointer),
@@ -145,6 +156,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     };
   }
 
+  /** Copies the current best dots out of WASM memory. */
   public getBestDots(): SerializedDot[] {
     const dotCount = this.module._stippling_engine_best_dot_count(
       this.enginePointer
@@ -183,6 +195,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Exports the current best result as SVG text. */
   public exportBestSvg(scale: number): string {
     const byteLength = this.module._stippling_engine_best_svg_byte_length(
       this.enginePointer,
@@ -207,6 +220,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Exports the current best result as PNG bytes. */
   public exportBestPng(scale: number): ArrayBuffer {
     const byteLength = this.module._stippling_engine_best_png_byte_length(
       this.enginePointer,
@@ -231,14 +245,17 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Reports whether a target image has already been prepared. */
   public hasImage(): boolean {
     return this.imageLoaded;
   }
 
+  /** Reports the current WASM heap capacity as a coarse memory-pressure metric. */
   public heapByteLength(): number {
     return this.module.HEAPU8.byteLength;
   }
 
+  /** Destroys the native engine handle. */
   public dispose(): void {
     if (this.enginePointer) {
       this.module._stippling_engine_destroy(this.enginePointer);
@@ -246,6 +263,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Copies the native prepared preview image out of WASM memory. */
   private copyPreparedImage(): SerializedImageBuffer {
     const width = this.module._stippling_engine_prepared_image_width(
       this.enginePointer
@@ -280,6 +298,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
+  /** Allocates a raw byte range inside WASM memory. */
   private allocateBytes(length: number): number {
     const pointer = this.module._malloc(Math.max(length, 1));
     if (!pointer) {
@@ -288,6 +307,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     return pointer;
   }
 
+  /** Throws with the native last-error message when a C ABI call fails. */
   private assertSuccess(statusCode: number, action: string): void {
     if (statusCode === 0) {
       return;
@@ -314,15 +334,18 @@ class NativeWasmEngineModule implements WasmEngineModule {
 
   constructor(private module: GeneratedStipplingEngineModule) {}
 
+  /** Creates one engine handle backed by the generated WASM module. */
   public createEngine(): WasmEngineInstance {
     return new NativeWasmEngineInstance(this.module);
   }
 
+  /** Releases module-level resources. The generated module needs no extra shutdown. */
   public dispose(): void {
     // The generated Emscripten module does not expose a separate shutdown hook.
   }
 }
 
+/** Loads the generated Emscripten module and wraps it in the typed TS facade. */
 export async function loadEngineModule(): Promise<WasmEngineModule> {
   const module = await createStipplingEngineModule();
   return new NativeWasmEngineModule(module);

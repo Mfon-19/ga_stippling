@@ -7,11 +7,12 @@ export interface PreprocessResult {
 }
 
 /**
- * Pure pixel processor shared by the browser fallback path and benchmark tools.
- * It mirrors the native engine's target preparation so the TypeScript baseline
- * and the WASM path are compared against the same processed target.
+ * Pure pixel processor kept for headless benchmark tooling.
+ * It mirrors the native engine's target preparation so the archived
+ * TypeScript baseline can be measured against the same processed target.
  */
 export class RasterImageProcessor {
+  /** Runs the full benchmark-side preprocessing pipeline. */
   public preprocess(
     sourceImageData: ImageData,
     config: TargetProcessingConfig

@@ -1,15 +1,18 @@
 /// <reference lib="webworker" />
 
+/**
+ * Dedicated worker entrypoint that owns the browser-to-engine command loop.
+ * It lazily boots the WASM module, routes commands to the backend, and sends
+ * progress, snapshots, errors, and export artifacts back to the main thread.
+ */
 import {
   EngineCommand,
   EngineEvent,
-  EngineCapabilities,
   EngineArtifactEvent,
   EngineSnapshotEvent,
   EngineStatus,
   EngineStatusEvent,
 } from "../shared/engineProtocol";
-import { TypescriptEngineBackend } from "./TypescriptEngineBackend";
 import { WasmEngineModule, loadEngineModule } from "../wasm/engineModule";
 import { WasmEngineBackend } from "./WasmEngineBackend";
 import { WorkerEngineBackend } from "./WorkerEngineBackend";
@@ -32,6 +35,7 @@ workerScope.addEventListener("message", (event: MessageEvent<EngineCommand>) => 
   void handleCommand(event.data);
 });
 
+/** Dispatches one command from the main thread to the worker backend. */
 async function handleCommand(command: EngineCommand): Promise<void> {
   try {
     switch (command.type) {
@@ -131,19 +135,11 @@ async function handleCommand(command: EngineCommand): Promise<void> {
   }
 }
 
+/** Lazily initializes the WASM module and backend on the first `init` request. */
 async function handleInitialize(requestId: string): Promise<void> {
   if (!state.module) {
-    try {
-      state.module = await loadEngineModule();
-      state.backend = new WasmEngineBackend(state.module.createEngine());
-    } catch (error) {
-      console.warn(
-        "Failed to load the native WASM backend. Falling back to the TypeScript worker engine.",
-        error
-      );
-      state.module = createTypescriptFallbackModule();
-      state.backend = new TypescriptEngineBackend();
-    }
+    state.module = await loadEngineModule();
+    state.backend = new WasmEngineBackend(state.module.createEngine());
   }
 
   state.status = "idle";
@@ -155,6 +151,7 @@ async function handleInitialize(requestId: string): Promise<void> {
   });
 }
 
+/** Builds a worker status event for the current backend state. */
 function createStatusEvent(requestId: string): EngineStatusEvent {
   return {
     type: "status",
@@ -165,6 +162,7 @@ function createStatusEvent(requestId: string): EngineStatusEvent {
   };
 }
 
+/** Asks the backend for the latest snapshot of the active run. */
 function createSnapshotEvent(
   requestId: string,
   runId: string
@@ -176,34 +174,14 @@ function createSnapshotEvent(
   return state.backend.createSnapshotEvent(requestId, runId);
 }
 
+/** Ensures the worker module and backend have been initialized. */
 function ensureInitialized(): void {
   if (!state.module || !state.backend) {
     throw new Error("Engine worker is not initialized");
   }
 }
 
-function createTypescriptFallbackModule(): WasmEngineModule {
-  const capabilities: EngineCapabilities = {
-    backend: "typescript",
-    incrementalFitness: false,
-    multiscale: false,
-    benchmarkMode: false,
-    exportSvg: false,
-    exportPng: false,
-    exportTimelapse: false,
-  };
-
-  return {
-    capabilities,
-    createEngine() {
-      throw new Error("The TypeScript fallback does not expose a native engine");
-    },
-    dispose() {
-      // The fallback path owns no native module resources.
-    },
-  };
-}
-
+/** Ensures a prepared image exists before run commands proceed. */
 function ensureImageLoaded(): void {
   ensureInitialized();
   if (!state.backend?.hasImage()) {
@@ -211,6 +189,7 @@ function ensureImageLoaded(): void {
   }
 }
 
+/** Ensures the requested run id matches the backend's active run. */
 function ensureActiveRun(runId: string): void {
   ensureImageLoaded();
   if (state.backend?.activeRunId() !== runId) {
@@ -218,6 +197,7 @@ function ensureActiveRun(runId: string): void {
   }
 }
 
+/** Posts a structured worker event back to the main thread. */
 function postEvent(
   event: EngineEvent,
   transferables: Transferable[] = []
@@ -225,14 +205,17 @@ function postEvent(
   workerScope.postMessage(event, transferables);
 }
 
+/** Posts an artifact event and transfers the artifact bytes. */
 function postArtifact(event: EngineArtifactEvent): void {
   postEvent(event, [event.data]);
 }
 
+/** Converts unknown thrown values into a stable error string. */
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown worker error";
 }
 
+/** Makes the command switch exhaustive. */
 function assertNever(command: never): never {
   throw new Error(`Unhandled worker command: ${JSON.stringify(command)}`);
 }

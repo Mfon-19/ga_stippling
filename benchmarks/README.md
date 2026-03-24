@@ -37,7 +37,7 @@ The benchmark runner:
 - decodes the root-level `jobs.jpeg` and `landscape.avif` fixtures
 - can also run directly on tracked Netpbm fixtures or whole directories under `fixtures/regression/`
 - preprocesses them with the current default blur and threshold
-- benchmarks both the TypeScript engine and the native WASM engine
+- benchmarks the archived TypeScript baseline and the active native WASM engine
 - records `generations/sec`
 - measures time to a shared quality target using a fixed seed
 - records image-quality metrics such as MSE, RMSE, PSNR, and exact pixel ratio

@@ -1,7 +1,7 @@
 /**
- * Shared contract between the UI, the worker, and the future C++/WASM engine.
- * Keeping these message shapes in one place makes the browser-to-engine
- * boundary explicit before the native backend exists.
+ * Shared contract between the browser UI, the worker, and the active C++/WASM
+ * engine runtime. Keeping these message shapes in one place makes the
+ * browser-to-engine boundary explicit and stable.
  */
 
 export type EngineStatus =
@@ -12,7 +12,7 @@ export type EngineStatus =
   | "paused"
   | "error";
 
-export type EngineBackend = "typescript" | "wasm";
+export type EngineBackend = "wasm";
 
 export interface EngineCapabilities {
   backend: EngineBackend;

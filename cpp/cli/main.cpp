@@ -1,6 +1,19 @@
 #include "stippling/engine/engine.hpp"
 #include "stippling/engine/export.hpp"
 
+// main.cpp implements the native command-line front end for the stippling
+// engine.
+//
+// At a high level, this file is responsible for:
+// - loading Netpbm fixture images
+// - running one-shot, batch, and benchmark-style optimization jobs
+// - writing SVG, PNG, timelapse, and JSON report artifacts
+// - exposing validation and benchmark metrics outside the browser runtime
+//
+// The CLI is intentionally lightweight and dependency-free so regression tests,
+// CI, and headless benchmark workflows can exercise the same native engine used
+// by the WASM build.
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +30,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
+/** Runtime options shared by single-run, batch, and benchmark commands. */
 struct RunOptions {
   std::uint32_t generations{10};
   std::uint32_t population{100};
@@ -34,6 +48,7 @@ struct RunOptions {
   bool include_dots{false};
 };
 
+/** Optional artifact paths emitted by one CLI run. */
 struct RunArtifacts {
   std::optional<fs::path> svg_path{};
   std::optional<fs::path> png_path{};
@@ -41,6 +56,7 @@ struct RunArtifacts {
   std::optional<fs::path> report_path{};
 };
 
+/** Batch-mode artifact switches and optional summary output path. */
 struct BatchArtifacts {
   bool emit_svg{false};
   bool emit_png{false};
@@ -49,6 +65,7 @@ struct BatchArtifacts {
   std::optional<fs::path> summary_report_path{};
 };
 
+/** Captures one completed CLI run and the metrics/artifacts it produced. */
 struct RunResult {
   fs::path input_path{};
   int width{0};
@@ -68,6 +85,7 @@ struct RunResult {
   RunArtifacts artifacts{};
 };
 
+/** Prints CLI usage information. */
 void print_usage() {
   std::cout << "Usage:\n"
             << "  stippling_cli run --input <image.pgm|ppm> [options]\n"
@@ -99,6 +117,7 @@ void print_usage() {
             << "  --report <file|->\n";
 }
 
+/** Escapes a string for inclusion in JSON output. */
 std::string json_escape(std::string_view value) {
   std::ostringstream stream;
   for (const auto character : value) {
@@ -126,6 +145,7 @@ std::string json_escape(std::string_view value) {
   return stream.str();
 }
 
+/** Reads the next non-comment token from a Netpbm stream. */
 std::string next_token(std::istream& stream) {
   std::string token;
 
@@ -141,6 +161,7 @@ std::string next_token(std::istream& stream) {
   throw std::runtime_error("Unexpected end of image header");
 }
 
+/** Loads a simple Netpbm image fixture and expands it into rgba8 pixels. */
 stippling::ImageBuffer load_netpbm_image(const fs::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -233,6 +254,7 @@ stippling::ImageBuffer load_netpbm_image(const fs::path& path) {
   throw std::runtime_error("Unsupported Netpbm format: " + magic);
 }
 
+/** Writes raw bytes to a file, creating parent directories as needed. */
 void write_bytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {
   fs::create_directories(path.parent_path());
   std::ofstream output(path, std::ios::binary);
@@ -243,6 +265,7 @@ void write_bytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {
                static_cast<std::streamsize>(bytes.size()));
 }
 
+/** Writes text to a file, creating parent directories as needed. */
 void write_text(const fs::path& path, const std::string& text) {
   fs::create_directories(path.parent_path());
   std::ofstream output(path, std::ios::binary);
@@ -252,6 +275,7 @@ void write_text(const fs::path& path, const std::string& text) {
   output << text;
 }
 
+/** Writes text to a file or stdout when the path is `-`. */
 void write_optional_text(const std::optional<fs::path>& path, const std::string& text) {
   if (!path) {
     return;
@@ -263,6 +287,7 @@ void write_optional_text(const std::optional<fs::path>& path, const std::string&
   write_text(*path, text);
 }
 
+/** Serializes a dot array into JSON for optional report inclusion. */
 std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
   std::ostringstream stream;
   stream << std::fixed << std::setprecision(12);
@@ -278,6 +303,7 @@ std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
   return stream.str();
 }
 
+/** Serializes one completed run into a machine-readable JSON report. */
 std::string report_to_json(const RunResult& result) {
   std::ostringstream stream;
   stream << std::fixed << std::setprecision(12);
@@ -346,6 +372,10 @@ std::string report_to_json(const RunResult& result) {
   return stream.str();
 }
 
+/**
+ * Executes one full engine run from image loading through preprocessing,
+ * optimization, optional validation, and optional artifact export.
+ */
 RunResult execute_run(const fs::path& input_path,
                       const RunOptions& options,
                       const RunArtifacts& artifacts) {
@@ -432,6 +462,7 @@ RunResult execute_run(const fs::path& input_path,
   };
 }
 
+/** Collects supported Netpbm input files from a directory in sorted order. */
 std::vector<fs::path> collect_input_files(const fs::path& input_dir) {
   std::vector<fs::path> inputs;
 
@@ -450,6 +481,7 @@ std::vector<fs::path> collect_input_files(const fs::path& input_dir) {
   return inputs;
 }
 
+/** Serializes a batch of run results into one summary JSON document. */
 std::string batch_results_to_json(const std::vector<RunResult>& results) {
   std::ostringstream stream;
   stream << "{\"runs\":[";
@@ -463,6 +495,7 @@ std::string batch_results_to_json(const std::vector<RunResult>& results) {
   return stream.str();
 }
 
+/** Returns the value that follows a CLI flag, or throws if it is missing. */
 std::string require_value(const std::vector<std::string>& args, std::size_t* index) {
   if (*index + 1 >= args.size()) {
     throw std::runtime_error("Missing value for " + args[*index]);
@@ -471,6 +504,7 @@ std::string require_value(const std::vector<std::string>& args, std::size_t* ind
   return args[*index];
 }
 
+/** Parses shared CLI options for run, batch, and benchmark commands. */
 RunOptions parse_run_options(const std::vector<std::string>& args,
                              std::size_t start_index,
                              std::optional<fs::path>* input_path,
@@ -544,6 +578,7 @@ RunOptions parse_run_options(const std::vector<std::string>& args,
 
 }  // namespace
 
+/** Dispatches the native CLI entrypoint. */
 int main(int argc, char** argv) {
   try {
     if (argc < 2) {

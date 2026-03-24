@@ -153,7 +153,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 20. Browser export controls
    - browser UI now exposes SVG, PNG, and timelapse export actions through the worker-backed WASM path
    - worker exports remain available after stopping a run so users can export the last converged result
-   - export buttons stay disabled when the engine falls back to the TypeScript backend
+   - export buttons stay disabled when the native engine is unavailable
 21. Multiscale and search-strategy expansion
    - native engine now builds a fixed-resolution pyramid (`1/8 -> 1/4 -> 1/2 -> 1x`) and promotes runs across levels
    - projected best-dot snapshots now stay meaningful even before the optimizer reaches full resolution
@@ -166,7 +166,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 
 ### Current State
 
-- The browser worker now boots a real C++/WASM backend by default and falls back to the TypeScript worker backend only if native module initialization fails.
+- The browser worker now boots a real C++/WASM backend as the only active evolution runtime, while the legacy TypeScript GA remains archived for reference and baseline benchmarking.
 - The browser build now has a reproducible Emscripten path and emits a generated native module under `src/wasm/generated/`.
 - The native C++ engine now has a real target-preparation API, a JS-friendly C ABI, and a browser-consumable WASM wrapper.
 - The native optimizer now performs incremental raster/error updates during crossover and mutation instead of recomputing every child from a full redraw.
@@ -176,6 +176,7 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
 - The browser UI now exposes the new export path directly instead of leaving it as a programmatic-only worker feature.
 - Fixture-based smoke benchmarks, report comparison tooling, and native/WASM parity validation now run against a broader tracked regression pack instead of only two smoke fixtures.
 - Basic CI now validates the current browser and native codepaths on every push and pull request.
+- The legacy TypeScript GA has been moved to `archive/typescript-ga/` and removed from the active browser runtime path.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline that now includes separable blur, edge response, local structure, and importance-map scoring.
 
@@ -205,7 +206,7 @@ Deliverables:
 Notes:
 
 - This phase should establish the "before" state for performance and quality.
-- The current hotspots are the full fitness recomputation in `src/core/Population.ts` and the main-thread animation loop in `src/ui/EventHandlers.ts`.
+- The original hotspots were the full fitness recomputation in `archive/typescript-ga/src/core/Population.ts` and the main-thread animation loop that used to live in `src/ui/EventHandlers.ts`.
 
 ### Phase 2: Worker Protocol and WASM Build Skeleton
 

@@ -1,7 +1,10 @@
 import { Population, PopulationConfig } from "./Population";
 import { Individual } from "./Individual";
 import { Dot } from "./Dot";
-import { MathRandomSource, RandomSource } from "../shared/random";
+import {
+  MathRandomSource,
+  RandomSource,
+} from "../../../../src/shared/random";
 
 export interface GeneticAlgorithmConfig {
   populationSize: number;

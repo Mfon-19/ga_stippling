@@ -1,6 +1,6 @@
 import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
-import { RasterImageProcessor } from "../shared/RasterImageProcessor";
-import { createSeededRandomSource } from "../shared/random";
+import { RasterImageProcessor } from "../../../../src/shared/RasterImageProcessor";
+import { createSeededRandomSource } from "../../../../src/shared/random";
 import {
   EngineArtifactEvent,
   EngineExportFormat,
@@ -12,8 +12,11 @@ import {
   SerializedImageBuffer,
   TargetPreparedEvent,
   TargetProcessingConfig,
-} from "../shared/engineProtocol";
-import { BackendCallbacks, WorkerEngineBackend } from "./WorkerEngineBackend";
+} from "../../../../src/shared/engineProtocol";
+import {
+  BackendCallbacks,
+  WorkerEngineBackend,
+} from "../../../../src/worker/WorkerEngineBackend";
 
 /**
  * Transitional backend that runs the existing TypeScript optimizer inside the

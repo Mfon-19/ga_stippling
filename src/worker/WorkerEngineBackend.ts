@@ -10,15 +10,16 @@ import {
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
 
+/**
+ * Worker-side backend contract implemented by the native WASM runtime.
+ * The worker talks to this interface so command dispatch stays decoupled from
+ * the concrete engine implementation.
+ */
 export interface BackendCallbacks {
   onProgress(event: EngineProgressEvent): void;
   onSnapshot(event: EngineSnapshotEvent): void;
 }
 
-/**
- * Shared worker-facing backend contract used by both the transitional
- * TypeScript engine and the native WASM engine.
- */
 export interface WorkerEngineBackend {
   prepareTarget(
     image: SerializedImageBuffer,

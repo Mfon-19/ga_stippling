@@ -1,8 +1,13 @@
+/**
+ * Small random-source helpers used where deterministic browser-side sampling is
+ * still needed for benchmarks or archived-baseline code paths.
+ */
 export interface RandomSource {
   next(): number;
 }
 
 export class MathRandomSource implements RandomSource {
+  /** Returns the next non-deterministic random sample from `Math.random()`. */
   public next(): number {
     return Math.random();
   }

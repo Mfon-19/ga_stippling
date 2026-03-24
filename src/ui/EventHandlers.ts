@@ -1,5 +1,8 @@
+/**
+ * Browser-side UI controller for uploads, preprocessing requests, optimization
+ * lifecycle, canvas rendering, telemetry, and export actions.
+ */
 import { CanvasManager } from "./CanvasManager";
-import { GeneticAlgorithm } from "../core/GeneticAlgorithm";
 import { CONFIG } from "../utils/config";
 import {
   EngineCapabilities,
@@ -11,8 +14,6 @@ import {
   TargetPreparedEvent,
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
-import { RasterImageProcessor } from "../shared/RasterImageProcessor";
-import { createSeededRandomSource } from "../shared/random";
 import { WasmEngineClient } from "../wasm/WasmEngineClient";
 
 export interface UIElements {
@@ -32,7 +33,6 @@ export interface UIElements {
 
 export interface ProcessingState {
   currentImage: HTMLImageElement | null;
-  geneticAlgorithm: GeneticAlgorithm | null;
   isEvolutionRunning: boolean;
   generations: number;
   recommendedDotCount: number;
@@ -41,12 +41,10 @@ export interface ProcessingState {
   activeSeed: number | null;
   bestFitness: number | null;
   generationsPerSecond: number | null;
-  animationFrameId?: number;
 }
 
 export class EventHandlers {
   private canvasManager: CanvasManager;
-  private rasterProcessor = new RasterImageProcessor();
   private engineClient: WasmEngineClient | null = null;
   private engineCapabilities: EngineCapabilities | null = null;
   private elements: UIElements;
@@ -57,7 +55,6 @@ export class EventHandlers {
     this.elements = elements;
     this.state = {
       currentImage: null,
-      geneticAlgorithm: null,
       isEvolutionRunning: false,
       generations: 0,
       recommendedDotCount: 0,
@@ -69,12 +66,13 @@ export class EventHandlers {
     };
 
     this.initializeEventListeners();
+    this.updateUIState(false);
   }
 
   /**
    * Attach the worker-backed engine client after the app finishes bootstrapping.
-   * The worker is optional during the migration, so the UI keeps a clean
-   * fallback path to the original main-thread implementation.
+   * The legacy TypeScript optimizer has been archived, so the active runtime
+   * path is worker + WASM only.
    */
   public setEngineClient(
     engineClient: WasmEngineClient | null,
@@ -82,6 +80,7 @@ export class EventHandlers {
   ): void {
     this.engineClient = engineClient;
     this.engineCapabilities = capabilities;
+    this.updateUIState(this.state.isEvolutionRunning);
     this.updateExportButtons();
 
     if (!this.engineClient) {
@@ -219,39 +218,25 @@ export class EventHandlers {
     if (!this.state.currentImage) {
       return;
     }
+    if (!this.engineClient) {
+      return;
+    }
 
     const processingVersion = ++this.state.processingVersion;
     const sourceImage = this.getSourceImageData();
     const processingConfig = this.getProcessingConfig();
 
     try {
-      if (this.engineClient) {
-        const preparedTarget = await this.engineClient.prepareTarget(
-          this.serializeImageData(sourceImage),
-          processingConfig
-        );
-
-        if (processingVersion !== this.state.processingVersion) {
-          return;
-        }
-
-        this.applyPreparedTarget(preparedTarget);
-        return;
-      }
-
-      const result = this.rasterProcessor.preprocess(sourceImage, processingConfig);
+      const preparedTarget = await this.engineClient.prepareTarget(
+        this.serializeImageData(sourceImage),
+        processingConfig
+      );
 
       if (processingVersion !== this.state.processingVersion) {
         return;
       }
 
-      this.applyPreparedTarget({
-        type: "target-prepared",
-        requestId: `local-${processingVersion}`,
-        status: "loaded",
-        image: this.serializeImageData(result.imageData),
-        stats: result.stats,
-      });
+      this.applyPreparedTarget(preparedTarget);
     } catch (error) {
       console.error("Error processing image:", error);
     }
@@ -282,64 +267,13 @@ export class EventHandlers {
    */
   private async handleStartEvolution(): Promise<void> {
     if (this.state.isEvolutionRunning || !this.state.currentImage) return;
-
-    const runConfig = this.createRunConfig();
-
-    if (this.engineClient) {
-      await this.startWorkerEvolution(runConfig);
+    if (!this.engineClient) {
+      console.error("Cannot start evolution without the WASM worker engine");
       return;
     }
 
-    const bwCtx = this.canvasManager.getBWContext();
-    const imageData = bwCtx.getImageData(
-      0,
-      0,
-      this.state.currentImage.width,
-      this.state.currentImage.height
-    );
-
-    this.state.geneticAlgorithm = new GeneticAlgorithm(imageData, {
-      populationSize: runConfig.populationSize,
-      mutationRate: runConfig.mutationRate,
-      dotCount: runConfig.dotCount,
-      elitismRatio: runConfig.elitismRatio,
-      random: createSeededRandomSource(runConfig.seed),
-    });
-
-    this.state.isEvolutionRunning = true;
-    this.state.workerRunId = null;
-    this.state.generations = 0;
-    this.state.activeSeed = runConfig.seed;
-    this.state.bestFitness = null;
-    this.state.generationsPerSecond = null;
-    this.updateUIState(true);
-    this.startEvolutionLoop();
-  }
-
-  /**
-   * Runs the evolution animation loop
-   */
-  private startEvolutionLoop(): void {
-    const evolve = () => {
-      if (!this.state.isEvolutionRunning || !this.state.geneticAlgorithm)
-        return;
-
-      this.state.geneticAlgorithm.evolve();
-      this.state.generations++;
-      this.updateDotCountDisplay();
-
-      const evolCtx = this.canvasManager.getEvolContext();
-      const population = this.state.geneticAlgorithm.getPopulation();
-      const fittestIndex = population.getFittestIndex();
-      population.drawIndividual(
-        population.population[fittestIndex].dots,
-        evolCtx
-      );
-
-      this.state.animationFrameId = requestAnimationFrame(evolve);
-    };
-
-    evolve();
+    const runConfig = this.createRunConfig();
+    await this.startWorkerEvolution(runConfig);
   }
 
   /**
@@ -347,9 +281,6 @@ export class EventHandlers {
    */
   public stopEvolution(): void {
     this.state.isEvolutionRunning = false;
-    if (this.state.animationFrameId) {
-      cancelAnimationFrame(this.state.animationFrameId);
-    }
     this.state.bestFitness = null;
     this.state.generationsPerSecond = null;
     if (this.engineClient && this.state.workerRunId) {
@@ -365,7 +296,8 @@ export class EventHandlers {
    * Updates the UI state
    */
   private updateUIState(isRunning: boolean): void {
-    (this.elements.startButton as HTMLButtonElement).disabled = isRunning;
+    const canStart = !isRunning && !!this.engineClient;
+    (this.elements.startButton as HTMLButtonElement).disabled = !canStart;
     (this.elements.stopButton as HTMLButtonElement).disabled = !isRunning;
     this.elements.fileInput.disabled = isRunning;
     this.elements.blurSlider.disabled = isRunning;
@@ -374,17 +306,6 @@ export class EventHandlers {
     this.updateExportButtons();
 
     document.body.classList.toggle("evolution-running", isRunning);
-
-    // Update HUD status indicator
-    const indicator = document.getElementById('statusIndicator');
-    if (indicator) {
-      indicator.style.background = isRunning ? '#ffd000' : '#00ff88';
-      indicator.style.boxShadow = isRunning ? '0 0 6px #ffd000' : '0 0 6px #00ff88';
-    }
-    const statusText = indicator?.nextElementSibling as HTMLElement | null;
-    if (statusText) {
-      statusText.textContent = isRunning ? 'Evolution Active' : 'System Nominal';
-    }
   }
 
   /**
@@ -432,7 +353,6 @@ export class EventHandlers {
 
       const runId = `run-${Date.now()}`;
       this.state.workerRunId = runId;
-      this.state.geneticAlgorithm = null;
       this.state.isEvolutionRunning = true;
       this.state.generations = 0;
       this.state.activeSeed = runConfig.seed;
@@ -539,24 +459,24 @@ export class EventHandlers {
     }
   }
 
-  /** Update viewport resolution footers in the HUD */
+  /** Update viewport resolution info */
   private updateViewportResolution(w: number, h: number): void {
     const viewports = document.querySelectorAll('.viewport-footer span:first-child');
     viewports.forEach((el) => {
-      (el as HTMLElement).textContent = `RES: ${w} × ${h}`;
+      (el as HTMLElement).textContent = `${w} × ${h}`;
     });
   }
 
-  /** Update the evolution viewport footer with live telemetry */
+  /** Update the evolution viewport with live stats */
   private updateEvolutionFooter(): void {
     const evolViewport = document.getElementById('viewportEvolution');
     if (!evolViewport) return;
     const footerSpans = evolViewport.querySelectorAll('.viewport-footer span');
     if (footerSpans.length >= 2) {
-      (footerSpans[0] as HTMLElement).textContent = `GEN: ${this.state.generations}`;
+      (footerSpans[0] as HTMLElement).textContent = `Gen ${this.state.generations}`;
       (footerSpans[1] as HTMLElement).textContent = this.state.bestFitness !== null
-        ? `FITNESS: ${this.state.bestFitness.toFixed(4)}`
-        : 'FITNESS: —';
+        ? `Fitness ${this.state.bestFitness.toFixed(4)}`
+        : '—';
     }
   }
 

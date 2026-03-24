@@ -1,14 +1,20 @@
 import { EngineArtifactEvent, SerializedDot } from "./engineProtocol";
 
+/**
+ * Browser-side helpers for assembling text-based export artifacts that do not
+ * need to round-trip through the native engine, such as timelapse SVG output.
+ */
 export interface TimelapseFrame {
   generation: number;
   dots: SerializedDot[];
 }
 
+/** Serializes one dot into an SVG circle element. */
 function formatCircle(dot: SerializedDot, scale: number): string {
   return `<circle cx="${dot.x * scale}" cy="${dot.y * scale}" r="${dot.radius * scale}" fill="black" />`;
 }
 
+/** Builds an animated SVG timelapse from captured dot snapshots. */
 export function renderTimelapseSvg(
   frames: TimelapseFrame[],
   width: number,
@@ -45,6 +51,7 @@ export function renderTimelapseSvg(
   ].join("");
 }
 
+/** Wraps UTF-8 text content as an artifact event payload. */
 export function createTextArtifact(
   requestId: string,
   runId: string,

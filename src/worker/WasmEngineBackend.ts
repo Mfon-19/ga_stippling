@@ -33,6 +33,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
 
   constructor(private engine: WasmEngineInstance) {}
 
+  /** Prepares a target image and resets any previous run state. */
   public prepareTarget(
     image: SerializedImageBuffer,
     processing: TargetProcessingConfig,
@@ -52,6 +53,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     };
   }
 
+  /** Configures and starts a new optimization run. */
   public startRun(
     runId: string,
     config: EngineRunConfig,
@@ -77,6 +79,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     this.scheduleNextBatch(callbacks);
   }
 
+  /** Pauses future batch scheduling without discarding the engine state. */
   public pause(): void {
     if (this.batchTimer !== null) {
       clearTimeout(this.batchTimer);
@@ -84,6 +87,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     }
   }
 
+  /** Stops the active run while preserving the last result for exports. */
   public stop(): void {
     this.pause();
     this.lastRunId = this.runId ?? this.lastRunId;
@@ -92,14 +96,17 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     this.startedAt = 0;
   }
 
+  /** Reports whether a prepared image is loaded in the engine. */
   public hasImage(): boolean {
     return this.engine.hasImage();
   }
 
+  /** Returns the active run id, or the last completed/stopped run id. */
   public activeRunId(): string | null {
     return this.runId ?? this.lastRunId;
   }
 
+  /** Creates a snapshot event from the engine's current best dots. */
   public createSnapshotEvent(requestId: string, runId: string): EngineSnapshotEvent {
     if (runId !== this.runId && runId !== this.lastRunId) {
       throw new Error(`Run ${runId} is not active`);
@@ -116,6 +123,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     };
   }
 
+  /** Exports the current best result in one of the supported artifact formats. */
   public exportArtifact(
     requestId: string,
     runId: string,
@@ -168,11 +176,13 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     }
   }
 
+  /** Disposes the scheduler state and the underlying engine instance. */
   public dispose(): void {
     this.resetRunState();
     this.engine.dispose();
   }
 
+  /** Schedules the next zero-delay optimization batch. */
   private scheduleNextBatch(callbacks: BackendCallbacks): void {
     this.batchTimer = setTimeout(() => {
       if (!this.runId || !this.currentConfig) {
@@ -210,6 +220,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     }, 0);
   }
 
+  /** Builds the metrics payload attached to progress events. */
   private createRunMetrics(
     bestFitness: number,
     batchDurationMs: number
@@ -232,6 +243,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     };
   }
 
+  /** Captures one frame for later timelapse export. */
   private captureFrame(generation: number): void {
     this.timelapseFrames.push({
       generation,
@@ -239,6 +251,7 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     });
   }
 
+  /** Clears the currently scheduled run state. */
   private resetRunState(): void {
     this.pause();
     this.runId = null;

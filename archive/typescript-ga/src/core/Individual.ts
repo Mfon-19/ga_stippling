@@ -1,5 +1,8 @@
 import { Dot } from "./Dot";
-import { MathRandomSource, RandomSource } from "../shared/random";
+import {
+  MathRandomSource,
+  RandomSource,
+} from "../../../../src/shared/random";
 
 export class Individual {
   public dots: Dot[];

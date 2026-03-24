@@ -3,6 +3,10 @@ import { EventHandlers, UIElements } from "./ui/EventHandlers";
 import { CONFIG } from "./utils/config";
 import { WasmEngineClient } from "./wasm/WasmEngineClient";
 
+/**
+ * Browser entrypoint that wires together the DOM, canvas layer, UI controller,
+ * and worker-backed WASM engine client.
+ */
 class App {
   private canvasManager!: CanvasManager;
   private eventHandlers!: EventHandlers;
@@ -32,8 +36,8 @@ class App {
       // Add window cleanup
       this.setupWindowListeners();
 
-      // Bootstrap the worker boundary now so the future WASM engine can be
-      // integrated without rewriting application startup.
+      // Bootstrap the worker boundary during startup so target preparation and
+      // optimization are both gated on the native WASM runtime.
       void this.initializeEngineClient();
     } catch (error) {
       this.handleInitializationError(error);
@@ -146,8 +150,8 @@ class App {
   }
 
   /**
-   * Initialize the worker client. The worker prefers the native WASM engine
-   * and only falls back if module bootstrap fails.
+   * Initialize the worker client. The app no longer has a local preprocessing
+   * fallback, so bootstrap failure leaves processing and evolution unavailable.
    */
   private async initializeEngineClient(): Promise<void> {
     this.engineClient = new WasmEngineClient();
@@ -162,12 +166,13 @@ class App {
         `Engine worker ready with backend: ${readyEvent.capabilities.backend}`
       );
     } catch (error) {
-      console.warn(
-        "Engine worker bootstrap failed. Continuing with the main-thread engine.",
+      console.error(
+        "Engine worker bootstrap failed. Processing and evolution are unavailable.",
         error
       );
       this.engineClient.terminate();
       this.engineClient = null;
+      this.eventHandlers.setEngineClient(null, null);
     }
   }
 

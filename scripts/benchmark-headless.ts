@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { GeneticAlgorithm } from "../src/core/GeneticAlgorithm";
+import { GeneticAlgorithm } from "../archive/typescript-ga/src/core/GeneticAlgorithm";
 import { RasterImageProcessor } from "../src/shared/RasterImageProcessor";
 import {
   EngineRunConfig,
@@ -53,7 +53,7 @@ interface QualityMetrics {
 }
 
 interface BackendRunResult {
-  backend: "typescript" | "wasm";
+  backend: "typescript-archive" | "wasm";
   generations: number;
   elapsedMs: number;
   generationsPerSecond: number;
@@ -72,7 +72,7 @@ interface BenchmarkResult {
   blackPercentage: number;
   measuredGenerations: number;
   targetFitness: number;
-  typescript: BackendSummary;
+  typescriptArchive: BackendSummary;
   wasm: BackendSummary;
   throughputSpeedupX: number;
   timeToQualityFasterPercent: number;
@@ -399,7 +399,7 @@ function runTypescriptGenerations(
   }));
 
   return {
-    backend: "typescript",
+    backend: "typescript-archive",
     generations,
     elapsedMs,
     generationsPerSecond: elapsedMs > 0 ? generations / (elapsedMs / 1000) : 0,
@@ -498,7 +498,7 @@ async function benchmarkFixture(fixture: TargetFixture): Promise<BenchmarkResult
     blackPercentage: fixture.blackPercentage,
     measuredGenerations,
     targetFitness,
-    typescript: summarizedTypescript,
+    typescriptArchive: summarizedTypescript,
     wasm: summarizedWasm,
     throughputSpeedupX:
       summarizedTypescript.generationsPerSecond > 0
@@ -539,11 +539,11 @@ function printReport(reportPath: string, report: JsonReport): void {
     );
     console.log(
       [
-        `  TS: ${result.typescript.generationsPerSecond.toFixed(2)} gen/s`,
-        `timeToTarget=${result.typescript.timeToTargetMs.toFixed(1)} ms`,
-        `targetGen=${result.typescript.generationAtTarget}`,
-        `finalFitness=${result.typescript.finalFitness.toFixed(4)}`,
-        `mse=${result.typescript.quality.mse.toFixed(1)}`,
+        `  Archived TS: ${result.typescriptArchive.generationsPerSecond.toFixed(2)} gen/s`,
+        `timeToTarget=${result.typescriptArchive.timeToTargetMs.toFixed(1)} ms`,
+        `targetGen=${result.typescriptArchive.generationAtTarget}`,
+        `finalFitness=${result.typescriptArchive.finalFitness.toFixed(4)}`,
+        `mse=${result.typescriptArchive.quality.mse.toFixed(1)}`,
       ].join(" | ")
     );
     console.log(

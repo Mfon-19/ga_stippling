@@ -1,5 +1,16 @@
 #include "stippling/engine/c_api.h"
 
+// c_api.cpp exposes the native engine through a plain C ABI.
+//
+// At a high level, this file is responsible for:
+// - translating C-facing structs and enums into C++ engine types
+// - wrapping engine calls in an exception-safe error boundary
+// - copying prepared images, dot snapshots, metrics, and export artifacts
+//   across the ABI boundary
+//
+// The WASM wrapper, browser worker, and native tests all depend on this layer
+// rather than linking directly against C++ classes.
+
 #include <algorithm>
 #include <exception>
 #include <memory>
@@ -16,6 +27,7 @@ struct StipplingEngine {
 
 namespace {
 
+/** Converts the C pixel-format enum into the native engine enum. */
 stippling::PixelFormat to_cpp_format(StipplingPixelFormat format) {
   switch (format) {
     case STIPPLING_PIXEL_FORMAT_GRAYSCALE8:
@@ -27,6 +39,7 @@ stippling::PixelFormat to_cpp_format(StipplingPixelFormat format) {
   throw std::invalid_argument("Unknown pixel format");
 }
 
+/** Converts the C configuration struct into the native engine config type. */
 stippling::EngineConfig to_cpp_config(const StipplingEngineConfig& config) {
   return {
       .population_size = config.population_size,
@@ -38,6 +51,7 @@ stippling::EngineConfig to_cpp_config(const StipplingEngineConfig& config) {
   };
 }
 
+/** Converts the C preprocessing struct into the native processing config type. */
 stippling::TargetProcessingConfig to_cpp_processing_config(
     const StipplingTargetProcessingConfig& config) {
   return {
@@ -47,6 +61,7 @@ stippling::TargetProcessingConfig to_cpp_processing_config(
   };
 }
 
+/** Copies a C image view into an owning native image buffer. */
 stippling::ImageBuffer to_cpp_image(const StipplingImageBufferView& image) {
   stippling::ImageBuffer buffer{
       .format = to_cpp_format(image.format),
@@ -62,6 +77,7 @@ stippling::ImageBuffer to_cpp_image(const StipplingImageBufferView& image) {
   return buffer;
 }
 
+/** Converts native target stats into the C ABI struct. */
 StipplingTargetStats to_c_stats(const stippling::TargetStats& stats) {
   return {
       .black_pixels = stats.black_pixels,
@@ -71,6 +87,7 @@ StipplingTargetStats to_c_stats(const stippling::TargetStats& stats) {
   };
 }
 
+/** Converts native progress metrics into the C ABI struct. */
 StipplingOptimizerProgress to_c_progress(
     const stippling::OptimizerProgress& progress) {
   return {
@@ -80,6 +97,7 @@ StipplingOptimizerProgress to_c_progress(
   };
 }
 
+/** Converts native validation output into the C ABI struct. */
 StipplingOptimizerValidation to_c_validation(
     const stippling::OptimizerValidation& validation) {
   return {
@@ -92,6 +110,7 @@ StipplingOptimizerValidation to_c_validation(
   };
 }
 
+/** Converts one native dot into its C ABI representation. */
 StipplingDot to_c_dot(const stippling::Dot& dot) {
   return {
       .x = dot.x,
@@ -100,6 +119,10 @@ StipplingDot to_c_dot(const stippling::Dot& dot) {
   };
 }
 
+/**
+ * Runs one C ABI operation behind an exception boundary. Failures are stored on
+ * the engine handle so callers can retrieve a stable error string.
+ */
 template <typename Callback>
 int with_error_boundary(StipplingEngine* engine, Callback&& callback) {
   if (engine == nullptr) {
@@ -118,14 +141,17 @@ int with_error_boundary(StipplingEngine* engine, Callback&& callback) {
 
 }  // namespace
 
+/** Allocates a new engine handle. */
 StipplingEngine* stippling_engine_create(void) {
   return new StipplingEngine{};
 }
 
+/** Destroys an engine handle created by `stippling_engine_create()`. */
 void stippling_engine_destroy(StipplingEngine* engine) {
   delete engine;
 }
 
+/** Applies a full engine configuration from the C ABI struct. */
 int stippling_engine_configure(StipplingEngine* engine,
                                const StipplingEngineConfig* config) {
   if (config == nullptr) {
@@ -137,6 +163,7 @@ int stippling_engine_configure(StipplingEngine* engine,
   });
 }
 
+/** Convenience overload that configures the engine from raw scalar values. */
 int stippling_engine_configure_values(StipplingEngine* engine,
                                       uint32_t population_size,
                                       double mutation_rate,
@@ -155,6 +182,7 @@ int stippling_engine_configure_values(StipplingEngine* engine,
   return stippling_engine_configure(engine, &config);
 }
 
+/** Prepares the engine target from a generic C image view. */
 int stippling_engine_prepare_target(
     StipplingEngine* engine,
     const StipplingImageBufferView* source_image,
@@ -169,6 +197,7 @@ int stippling_engine_prepare_target(
   });
 }
 
+/** Convenience overload for preparing an rgba8 target directly from raw bytes. */
 int stippling_engine_prepare_target_rgba8(StipplingEngine* engine,
                                           int width,
                                           int height,
@@ -196,12 +225,14 @@ int stippling_engine_prepare_target_rgba8(StipplingEngine* engine,
   return stippling_engine_prepare_target(engine, &image, &config);
 }
 
+/** Initializes the native optimizer for the current prepared target. */
 int stippling_engine_initialize_optimizer(StipplingEngine* engine) {
   return with_error_boundary(engine, [&]() {
     engine->engine.initialize_optimizer();
   });
 }
 
+/** Advances the optimizer and writes progress into the supplied output struct. */
 int stippling_engine_evolve_batch(StipplingEngine* engine,
                                   StipplingOptimizerProgress* progress) {
   if (progress == nullptr) {
@@ -213,11 +244,13 @@ int stippling_engine_evolve_batch(StipplingEngine* engine,
   });
 }
 
+/** Advances the optimizer when the caller does not need the progress struct. */
 int stippling_engine_evolve_batch_in_place(StipplingEngine* engine) {
   StipplingOptimizerProgress progress{};
   return stippling_engine_evolve_batch(engine, &progress);
 }
 
+/** Returns the prepared preview image width. */
 int stippling_engine_prepared_image_width(const StipplingEngine* engine) {
   if (engine == nullptr || !engine->engine.has_image()) {
     return 0;
@@ -226,6 +259,7 @@ int stippling_engine_prepared_image_width(const StipplingEngine* engine) {
   return engine->engine.image().width;
 }
 
+/** Returns the prepared preview image height. */
 int stippling_engine_prepared_image_height(const StipplingEngine* engine) {
   if (engine == nullptr || !engine->engine.has_image()) {
     return 0;
@@ -234,6 +268,7 @@ int stippling_engine_prepared_image_height(const StipplingEngine* engine) {
   return engine->engine.image().height;
 }
 
+/** Returns the prepared preview image byte length. */
 size_t stippling_engine_prepared_image_byte_length(const StipplingEngine* engine) {
   if (engine == nullptr || !engine->engine.has_image()) {
     return 0;
@@ -242,6 +277,7 @@ size_t stippling_engine_prepared_image_byte_length(const StipplingEngine* engine
   return engine->engine.image().pixels.size();
 }
 
+/** Copies the prepared preview image into a caller-owned RGBA buffer. */
 size_t stippling_engine_copy_prepared_image_rgba8(const StipplingEngine* engine,
                                                   uint8_t* output,
                                                   size_t capacity) {
@@ -255,6 +291,7 @@ size_t stippling_engine_copy_prepared_image_rgba8(const StipplingEngine* engine,
   return count;
 }
 
+/** Returns how many dots are in the current best solution. */
 size_t stippling_engine_best_dot_count(const StipplingEngine* engine) {
   if (engine == nullptr || !engine->engine.has_optimizer()) {
     return 0;
@@ -263,6 +300,7 @@ size_t stippling_engine_best_dot_count(const StipplingEngine* engine) {
   return engine->engine.best_dots().size();
 }
 
+/** Copies the current best dots into a caller-owned array. */
 size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
                                        StipplingDot* output,
                                        size_t capacity) {
@@ -280,6 +318,7 @@ size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
   return count;
 }
 
+/** Returns the byte length of the current best SVG export. */
 size_t stippling_engine_best_svg_byte_length(const StipplingEngine* engine,
                                              int scale) {
   if (engine == nullptr || !engine->engine.has_optimizer()) {
@@ -289,6 +328,7 @@ size_t stippling_engine_best_svg_byte_length(const StipplingEngine* engine,
   return engine->engine.export_best_svg(scale).size();
 }
 
+/** Copies the current best SVG export into a caller-owned buffer. */
 size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
                                       char* output,
                                       size_t capacity,
@@ -303,6 +343,7 @@ size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
   return count;
 }
 
+/** Returns the byte length of the current best PNG export. */
 size_t stippling_engine_best_png_byte_length(const StipplingEngine* engine,
                                              int scale) {
   if (engine == nullptr || !engine->engine.has_optimizer()) {
@@ -312,6 +353,7 @@ size_t stippling_engine_best_png_byte_length(const StipplingEngine* engine,
   return engine->engine.export_best_png(scale).size();
 }
 
+/** Copies the current best PNG export into a caller-owned buffer. */
 size_t stippling_engine_copy_best_png(const StipplingEngine* engine,
                                       uint8_t* output,
                                       size_t capacity,
@@ -326,6 +368,7 @@ size_t stippling_engine_copy_best_png(const StipplingEngine* engine,
   return count;
 }
 
+/** Returns the current target statistics as a C ABI struct. */
 StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine) {
   if (engine == nullptr) {
     return {};
@@ -334,23 +377,28 @@ StipplingTargetStats stippling_engine_target_stats(const StipplingEngine* engine
   return to_c_stats(engine->engine.target_stats());
 }
 
+/** Returns the current target's black-pixel count. */
 uint32_t stippling_engine_target_black_pixels(const StipplingEngine* engine) {
   return engine == nullptr ? 0u : engine->engine.target_stats().black_pixels;
 }
 
+/** Returns the current target's total pixel count. */
 uint32_t stippling_engine_target_total_pixels(const StipplingEngine* engine) {
   return engine == nullptr ? 0u : engine->engine.target_stats().total_pixels;
 }
 
+/** Returns the current target's black-pixel percentage. */
 double stippling_engine_target_black_percentage(const StipplingEngine* engine) {
   return engine == nullptr ? 0.0 : engine->engine.target_stats().black_percentage;
 }
 
+/** Returns the engine's recommended dot count for the current target. */
 uint32_t stippling_engine_target_recommended_dot_count(const StipplingEngine* engine) {
   return engine == nullptr ? 0u
                            : engine->engine.target_stats().recommended_dot_count;
 }
 
+/** Returns the latest optimizer progress as a C ABI struct. */
 StipplingOptimizerProgress stippling_engine_optimizer_progress(
     const StipplingEngine* engine) {
   if (engine == nullptr) {
@@ -360,20 +408,24 @@ StipplingOptimizerProgress stippling_engine_optimizer_progress(
   return to_c_progress(engine->engine.optimizer_progress());
 }
 
+/** Returns the latest whole-run optimizer generation count. */
 uint32_t stippling_engine_optimizer_generation(const StipplingEngine* engine) {
   return engine == nullptr ? 0u : engine->engine.optimizer_progress().generation;
 }
 
+/** Returns the latest best fitness value. */
 double stippling_engine_optimizer_best_fitness(const StipplingEngine* engine) {
   return engine == nullptr ? 0.0 : engine->engine.optimizer_progress().best_fitness;
 }
 
+/** Returns the latest best squared-error value. */
 uint64_t stippling_engine_optimizer_best_squared_error(
     const StipplingEngine* engine) {
   return engine == nullptr ? 0u
                            : engine->engine.optimizer_progress().best_squared_error;
 }
 
+/** Validates the optimizer's incremental raster bookkeeping. */
 StipplingOptimizerValidation stippling_engine_validate_optimizer(
     const StipplingEngine* engine) {
   if (engine == nullptr || !engine->engine.has_optimizer()) {
@@ -383,6 +435,7 @@ StipplingOptimizerValidation stippling_engine_validate_optimizer(
   return to_c_validation(engine->engine.validate_optimizer());
 }
 
+/** Returns the last stored error message for a handle. */
 const char* stippling_engine_last_error(const StipplingEngine* engine) {
   return engine == nullptr ? "Engine handle is null" : engine->last_error.c_str();
 }
