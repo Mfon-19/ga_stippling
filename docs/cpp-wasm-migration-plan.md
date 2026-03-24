@@ -94,11 +94,15 @@ The objective is not "rewrite everything in C++." The objective is to keep the b
    - worker progress events now include timing and throughput metrics
    - UI now surfaces seed, fitness, and generation speed
    - default benchmark run configuration added under `benchmarks/`
+6. Native preprocessing surface
+   - C++ engine now owns target-processing configuration and target statistics
+   - native preprocessing path can convert rgba input into a thresholded target image
+   - CLI and smoke test now exercise target preparation instead of only config storage
 
 ### Current State
 
 - The browser app now routes target preparation and optimization through the worker-backed TypeScript backend when the worker is available.
-- The native C++ engine exists as a documented scaffold, not yet as a feature-parity implementation.
+- The native C++ engine now has a real target-preparation API, but it is still not a feature-parity optimizer implementation.
 - Code comments have been added to the worker boundary and C++ scaffold, and that standard needs to continue through every subsequent sprint.
 - Preprocessing has been detached from DOM canvas contexts and moved into a shared pixel pipeline, which is a prerequisite for the native port.
 

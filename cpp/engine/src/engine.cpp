@@ -1,5 +1,6 @@
 #include "stippling/engine/engine.hpp"
 
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -10,11 +11,102 @@ bool ImageBuffer::valid() const noexcept {
     return false;
   }
 
-  const auto expected_size =
-      static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+  const auto channels = format == PixelFormat::rgba8 ? 4u : 1u;
+  const auto expected_size = static_cast<std::size_t>(width) *
+                             static_cast<std::size_t>(height) * channels;
 
   return pixels.size() == expected_size;
 }
+
+namespace {
+
+void convert_to_grayscale(ImageBuffer& image) {
+  for (std::size_t index = 0; index < image.pixels.size(); index += 4) {
+    const auto gray = static_cast<std::uint8_t>(
+        0.299 * image.pixels[index] + 0.587 * image.pixels[index + 1] +
+        0.114 * image.pixels[index + 2]);
+    image.pixels[index] = gray;
+    image.pixels[index + 1] = gray;
+    image.pixels[index + 2] = gray;
+  }
+}
+
+std::vector<std::uint8_t> blur_rgba(const ImageBuffer& image,
+                                    std::uint32_t blur_amount) {
+  std::vector<std::uint8_t> blurred(image.pixels.size(), 0);
+
+  for (int y = 0; y < image.height; ++y) {
+    for (int x = 0; x < image.width; ++x) {
+      std::uint32_t sum = 0;
+      std::uint32_t count = 0;
+
+      for (int dy = -static_cast<int>(blur_amount);
+           dy <= static_cast<int>(blur_amount); ++dy) {
+        for (int dx = -static_cast<int>(blur_amount);
+             dx <= static_cast<int>(blur_amount); ++dx) {
+          const auto next_x = x + dx;
+          const auto next_y = y + dy;
+
+          if (next_x < 0 || next_x >= image.width || next_y < 0 ||
+              next_y >= image.height) {
+            continue;
+          }
+
+          const auto index =
+              static_cast<std::size_t>((next_y * image.width + next_x) * 4);
+          sum += image.pixels[index];
+          ++count;
+        }
+      }
+
+      const auto blurred_value =
+          static_cast<std::uint8_t>(std::round(sum / static_cast<double>(count)));
+      const auto index = static_cast<std::size_t>((y * image.width + x) * 4);
+
+      blurred[index] = blurred_value;
+      blurred[index + 1] = blurred_value;
+      blurred[index + 2] = blurred_value;
+      blurred[index + 3] = image.pixels[index + 3];
+    }
+  }
+
+  return blurred;
+}
+
+void apply_threshold(ImageBuffer& image, std::uint32_t threshold) {
+  for (std::size_t index = 0; index < image.pixels.size(); index += 4) {
+    const auto value =
+        image.pixels[index] < threshold ? static_cast<std::uint8_t>(0)
+                                        : static_cast<std::uint8_t>(255);
+    image.pixels[index] = value;
+    image.pixels[index + 1] = value;
+    image.pixels[index + 2] = value;
+  }
+}
+
+TargetStats calculate_target_stats(const ImageBuffer& image,
+                                   std::uint32_t max_dot_count) {
+  TargetStats stats{};
+  stats.total_pixels = static_cast<std::uint32_t>(image.width * image.height);
+
+  for (std::size_t index = 0; index < image.pixels.size(); index += 4) {
+    if (image.pixels[index] == 0) {
+      ++stats.black_pixels;
+    }
+  }
+
+  stats.black_percentage =
+      stats.total_pixels == 0
+          ? 0.0
+          : static_cast<double>(stats.black_pixels) /
+                static_cast<double>(stats.total_pixels);
+  stats.recommended_dot_count = static_cast<std::uint32_t>(
+      std::ceil(stats.black_percentage * static_cast<double>(max_dot_count)));
+
+  return stats;
+}
+
+}  // namespace
 
 Engine::Engine() {
   status_ = EngineStatus::idle;
@@ -36,6 +128,10 @@ const ImageBuffer& Engine::image() const noexcept {
   return image_;
 }
 
+const TargetStats& Engine::target_stats() const noexcept {
+  return target_stats_;
+}
+
 bool Engine::has_image() const noexcept {
   return image_.valid();
 }
@@ -46,15 +142,37 @@ void Engine::configure(const EngineConfig& config) {
 }
 
 void Engine::load_image(ImageBuffer image) {
-  // The native core will operate on tightly packed grayscale/importance buffers.
-  // Validating that assumption early keeps the browser and CLI integrations honest.
   if (!image.valid()) {
-    throw std::invalid_argument(
-        "ImageBuffer must contain width * height grayscale pixels");
+    throw std::invalid_argument("ImageBuffer size does not match its format");
   }
 
   image_ = std::move(image);
   status_ = EngineStatus::image_loaded;
+}
+
+ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
+                                   const TargetProcessingConfig& config) {
+  if (!source_image.valid()) {
+    throw std::invalid_argument("Source image buffer is invalid");
+  }
+  if (source_image.format != PixelFormat::rgba8) {
+    throw std::invalid_argument(
+        "prepare_target expects a tightly packed rgba8 source image");
+  }
+
+  ImageBuffer processed = source_image;
+  convert_to_grayscale(processed);
+
+  if (config.blur_amount > 0) {
+    processed.pixels = blur_rgba(processed, config.blur_amount);
+  }
+
+  apply_threshold(processed, config.threshold);
+  image_ = processed;
+  target_stats_ = calculate_target_stats(processed, config.max_dot_count);
+  status_ = EngineStatus::image_loaded;
+
+  return processed;
 }
 
 std::string Engine::status_string() const {
