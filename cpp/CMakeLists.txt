@@ -55,6 +55,9 @@ target_include_directories(
 add_executable(stippling_cli cli/main.cpp)
 target_link_libraries(stippling_cli PRIVATE stippling_engine)
 
+add_executable(stippling_raster_bench bench/raster_bench.cpp)
+target_link_libraries(stippling_raster_bench PRIVATE stippling_engine)
+
 enable_testing()
 
 add_executable(stippling_smoke_test tests/smoke_test.cpp)

@@ -4,9 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "benchmark": "npm run build:wasm && ./scripts/run-benchmark.sh",
-    "benchmark:compare": "node ./scripts/compare-benchmarks.mjs",
-    "benchmark:fixtures": "npm run build:wasm && ./scripts/run-benchmark.sh fixtures/regression",
+    "benchmark:raster": "./scripts/run-raster-bench.sh",
     "build:wasm": "./scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && tsc && vite build",

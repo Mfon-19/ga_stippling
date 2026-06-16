@@ -267,44 +267,38 @@ Because of the boundary cost, the bridge keeps calls coarse-grained (e.g., prepa
 
 ## Benchmarks
 
-Once the native engine existed, the obvious question was whether all of this extra architecture actually mattered. The benchmark harness in [`scripts/benchmark-headless.ts`](./scripts/benchmark-headless.ts) answers that by comparing two versions of the project under the same conditions:
+Once the native engine existed, the obvious question was whether the central architectural bet — the incremental raster from [Section 4](#4-incremental-raster-fitness) — actually paid off. The benchmark in [`cpp/bench/raster_bench.cpp`](./cpp/bench/raster_bench.cpp) answers that, and it is deliberately narrow: it isolates the data structure and nothing else.
 
-- the **archived TypeScript implementation**, which represents the original prototype
-- the **active C++/WASM engine**, which is the worker-hosted native runtime used by the browser today
+It runs entirely inside one optimized native binary — no browser, no JavaScript — so the result reflects the algorithm rather than a language gap. Inside that binary it compares the two ways of answering the question the genetic algorithm asks thousands of times per generation — _"what would this candidate's error be if I changed one dot?"_:
 
-What gets benchmarked is not just "how many generations can each version execute?" but also "how quickly can each version reach the same quality target?" That distinction matters. Raw throughput is useful, but a fast engine that converges poorly is not very interesting. So the harness records both:
+- **Full redraw** — what you must do without persistent raster state: clear the grid, redraw every dot, recompare every pixel. This is the original prototype's strategy, costing `O(dots · footprint + pixels)` per evaluation.
+- **Incremental** — [`apply_dot_delta_and_update_error()`](./cpp/engine/src/raster_grid.cpp#L71-L83), which only touches the pixels under the two dot footprints involved, costing `O(footprint)`.
 
-- **throughput** in generations per second
-- **time to a shared quality target**, using the same seed and configuration
-- **final output quality**, using `MSE`, `RMSE`, `PSNR`, and exact pixel ratio
+Both run in the same binary, on the same data, with the same compiler flags, so the result reflects the data structure and nothing else. Before timing, every cell verifies the incremental error is bit-for-bit equal to a from-scratch recompute — so the speedup can never come from the fast path quietly doing less correct work.
 
-To keep the comparison honest, both paths use the same preprocessing setup (`blur = 0`, `threshold = 130`), the same default optimizer settings (`population = 100`, `mutation = 0.2`, `elitism = 0.15`), the same fixed seed (`1337`), a warmup pass before measurement, and five repeated runs summarized by median values. The "time to quality" target is chosen as the lower of the two warmup final fitness values, so both backends are judged against the same bar rather than against separate end states.
+**Scaling with dot count** (fixed `512×512` image, representative run on Apple Silicon, Release build):
 
-The main performance harness is exposed through `npm run benchmark`.
+| Dots    | Full redraw / eval | Incremental / eval | Speedup   | Exact |
+| ------- | ------------------ | ------------------ | --------- | ----- |
+| `250`   | `19.8 µs`          | `35 ns`            | `~590×`   | yes   |
+| `500`   | `21.5 µs`          | `35 ns`            | `~620×`   | yes   |
+| `1,000` | `26.3 µs`          | `36 ns`            | `~730×`   | yes   |
+| `2,000` | `34.5 µs`          | `36 ns`            | `~960×`   | yes   |
+| `4,000` | `52.0 µs`          | `36 ns`            | `~1,440×` | yes   |
+| `8,000` | `85.7 µs`          | `37 ns`            | `~2,300×` | yes   |
 
-### Latest Results
+**Scaling with image size** (fixed `3,000` dots):
 
-The latest local benchmark report is measured on the two real-image fixtures in the project root:
+| Image       | Pixels      | Full redraw / eval | Incremental / eval | Speedup   | Exact |
+| ----------- | ----------- | ------------------ | ------------------ | --------- | ----- |
+| `128×128`   | `16,384`    | `24.9 µs`          | `40 ns`            | `~615×`   | yes   |
+| `256×256`   | `65,536`    | `30.0 µs`          | `38 ns`            | `~790×`   | yes   |
+| `512×512`   | `262,144`   | `43.0 µs`          | `36 ns`            | `~1,200×` | yes   |
+| `1024×1024` | `1,048,576` | `96.0 µs`          | `36 ns`            | `~2,670×` | yes   |
 
-| Image            | Size      | Dot Count | Archived TS    | WASM            | Throughput Speedup | Time to Same Quality                    |
-| ---------------- | --------- | --------- | -------------- | --------------- | ------------------ | --------------------------------------- |
-| `jobs.jpeg`      | `210x240` | `407`     | `115.21 gen/s` | `2582.45 gen/s` | `22.41x`           | `78.2 ms` → `0.2 ms` (`99.7%` faster)   |
-| `landscape.avif` | `740x493` | `4006`    | `4.57 gen/s`   | `294.36 gen/s`  | `64.36x`           | `1963.1 ms` → `3.6 ms` (`99.8%` faster) |
+The shape is the whole point. The incremental cost is **flat** — about 35 ns regardless of whether there are 250 dots or 8,000, or whether the image is 16 thousand pixels or a million — because it only ever touches the footprint of the dots that changed. The full-redraw cost grows with **both** the dot count and the image size, so the gap doesn't just exist, it _widens_ with scale: from a few hundred× on small inputs to over 2,000× at the kind of dot counts and resolutions this project actually runs. This is the `O(dots · footprint + pixels) → O(footprint)` claim from Section 4, measured rather than asserted.
 
-The portrait image already shows a large win: the WASM path is roughly **22x faster** in raw optimization throughput and reaches the same quality target essentially immediately compared to the archived TypeScript path. The larger landscape image is the more meaningful stress test, and that is where the architectural changes really show up: the worker-hosted C++/WASM engine is roughly **64x faster** in throughput and reaches the same target fitness in about **0.2% of the time**.
-
-### Quality Metrics From That Run
-
-The benchmark also records final output quality for each backend:
-
-| Image            | Backend     | Final Fitness | MSE        | RMSE     | PSNR   | Exact Pixel Ratio |
-| ---------------- | ----------- | ------------- | ---------- | -------- | ------ | ----------------- |
-| `jobs.jpeg`      | Archived TS | `0.7859`      | `24859.16` | `157.67` | `4.18` | `0.6177`          |
-| `jobs.jpeg`      | WASM        | `0.8605`      | `25270.73` | `158.97` | `4.10` | `0.6114`          |
-| `landscape.avif` | Archived TS | `0.6491`      | `37625.99` | `193.97` | `2.38` | `0.4214`          |
-| `landscape.avif` | WASM        | `0.7651`      | `38253.74` | `195.59` | `2.30` | `0.4117`          |
-
-These quality numbers are most useful when read alongside the time-to-quality numbers. The point of this benchmark is not "which backend looks better after the exact same fixed number of generations?" The point is "how much faster can the native engine reach a comparable level of solution quality?" On that measure, the C++/WASM path is decisively ahead.
+Run it locally with `npm run benchmark:raster` (writes CSV and JSON to `benchmarks/raster/`).
 
 ## Conclusion
 
