@@ -71,7 +71,12 @@ class Optimizer {
   OptimizerProgress progress_{};
   mutable RandomGenerator random_;
   std::vector<double> cumulative_target_weights_{};
+  // sampler_guide_[k] is where the search for bucket k's weights starts; see
+  // sample_target_index().
+  std::vector<std::uint32_t> sampler_guide_{};
   double total_target_weight_{0.0};
+  // dot_target_score() per pixel, precomputed so scoring is a single load.
+  std::vector<double> target_scores_{};
   double last_best_fitness_{0.0};
   std::uint32_t stagnation_generations_{0};
 
@@ -92,6 +97,7 @@ class Optimizer {
   const Candidate& select_parent(std::size_t island_index);
   void migrate_islands();
   std::size_t sample_target_index();
+  double sampler_bucket_start(std::size_t bucket) const;
   double adaptive_mutation_rate() const;
   double mutation_distance_scale() const;
   Dot guided_dot();

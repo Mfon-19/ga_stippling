@@ -1,7 +1,5 @@
 #include "stippling/engine/raster_grid.hpp"
 
-// Invariant: pixels_[i] is black exactly when coverage_[i] > 0.
-
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -9,6 +7,10 @@
 namespace stippling {
 
 namespace {
+
+std::uint8_t pixel_for_coverage(int count) {
+  return static_cast<std::uint8_t>(count > 0 ? 0 : 255);
+}
 
 std::uint64_t pixel_squared_error(std::uint8_t pixel, std::uint8_t target) {
   const auto diff = static_cast<int>(pixel) - static_cast<int>(target);
@@ -20,7 +22,6 @@ std::uint64_t pixel_squared_error(std::uint8_t pixel, std::uint8_t target) {
 RasterGrid::RasterGrid(int width, int height)
     : width_(width),
       height_(height),
-      pixels_(static_cast<std::size_t>(width * height), 255),
       coverage_(static_cast<std::size_t>(width * height), 0) {
   if (width <= 0 || height <= 0) {
     throw std::invalid_argument("RasterGrid dimensions must be positive");
@@ -28,7 +29,6 @@ RasterGrid::RasterGrid(int width, int height)
 }
 
 void RasterGrid::clear() {
-  std::fill(pixels_.begin(), pixels_.end(), 255);
   std::fill(coverage_.begin(), coverage_.end(), 0);
 }
 
@@ -46,7 +46,7 @@ std::uint64_t RasterGrid::apply_dot_delta_and_update_error(
     const Dot& next_dot,
     const std::vector<std::uint8_t>& target,
     std::uint64_t current_squared_error) {
-  if (target.size() != pixels_.size()) {
+  if (target.size() != coverage_.size()) {
     throw std::invalid_argument("Target size does not match raster dimensions");
   }
 
@@ -57,22 +57,27 @@ std::uint64_t RasterGrid::apply_dot_delta_and_update_error(
 
 std::uint64_t RasterGrid::squared_error(
     const std::vector<std::uint8_t>& target) const {
-  if (target.size() != pixels_.size()) {
+  if (target.size() != coverage_.size()) {
     throw std::invalid_argument("Target size does not match raster dimensions");
   }
 
-  std::uint64_t diff = 0;
-  for (std::size_t index = 0; index < pixels_.size(); ++index) {
-    const auto pixel_diff =
-        static_cast<int>(pixels_[index]) - static_cast<int>(target[index]);
-    diff += static_cast<std::uint64_t>(pixel_diff * pixel_diff);
+  std::uint64_t error = 0;
+  for (std::size_t index = 0; index < coverage_.size(); ++index) {
+    error += pixel_squared_error(pixel_for_coverage(coverage_[index]), target[index]);
   }
-
-  return diff;
+  return error;
 }
 
-const std::vector<std::uint8_t>& RasterGrid::pixels() const noexcept {
-  return pixels_;
+std::vector<std::uint8_t> RasterGrid::pixels() const {
+  std::vector<std::uint8_t> pixels(coverage_.size());
+  for (std::size_t index = 0; index < coverage_.size(); ++index) {
+    pixels[index] = pixel_for_coverage(coverage_[index]);
+  }
+  return pixels;
+}
+
+const std::vector<std::uint16_t>& RasterGrid::coverage() const noexcept {
+  return coverage_;
 }
 
 int RasterGrid::width() const noexcept {
@@ -137,21 +142,20 @@ void RasterGrid::update_horizontal_span(int y,
   start_x = std::max(0, start_x);
   end_x = std::min(width_ - 1, end_x);
 
-  // Accumulate in a local: byte stores into pixels_ may alias *squared_error,
-  // which would otherwise force a reload and store on every pixel.
   const auto track_error = target != nullptr && squared_error != nullptr;
   auto error = track_error ? *squared_error : 0u;
 
   for (int x = start_x; x <= end_x; ++x) {
     const auto index = static_cast<std::size_t>(y * width_ + x);
-    const auto previous_pixel = pixels_[index];
-    const auto next_count = static_cast<int>(coverage_[index]) + delta;
+    const auto previous_count = static_cast<int>(coverage_[index]);
+    const auto next_count = previous_count + delta;
 
     if (next_count < 0) {
       throw std::logic_error("Coverage count cannot become negative");
     }
 
-    const auto next_pixel = static_cast<std::uint8_t>(next_count > 0 ? 0 : 255);
+    const auto previous_pixel = pixel_for_coverage(previous_count);
+    const auto next_pixel = pixel_for_coverage(next_count);
     if (track_error) {
       // Branch-free: when the pixel does not change the two terms cancel.
       // Unsigned arithmetic is modular, so the running total stays exact.
@@ -160,7 +164,6 @@ void RasterGrid::update_horizontal_span(int y,
     }
 
     coverage_[index] = static_cast<std::uint16_t>(next_count);
-    pixels_[index] = next_pixel;
   }
 
   if (track_error) {

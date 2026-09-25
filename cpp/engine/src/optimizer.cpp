@@ -214,10 +214,10 @@ OptimizerValidation Optimizer::validate_incremental_state() const {
     }
 
     const auto recomputed_error = full.squared_error(target_);
-    const auto pixel_match = full.pixels() == candidate.grid.pixels();
+    const auto coverage_match = full.coverage() == candidate.grid.coverage();
     const auto error_match = recomputed_error == candidate.squared_error;
 
-    if (pixel_match && error_match) {
+    if (coverage_match && error_match) {
       continue;
     }
 
@@ -235,8 +235,8 @@ OptimizerValidation Optimizer::validate_incremental_state() const {
     validation.max_squared_error_delta =
         std::max(validation.max_squared_error_delta, error_delta);
 
-    const auto& expected_pixels = full.pixels();
-    const auto& actual_pixels = candidate.grid.pixels();
+    const auto expected_pixels = full.pixels();
+    const auto actual_pixels = candidate.grid.pixels();
     for (std::size_t pixel_index = 0; pixel_index < expected_pixels.size();
          ++pixel_index) {
       if (expected_pixels[pixel_index] != actual_pixels[pixel_index]) {
@@ -274,6 +274,7 @@ void Optimizer::build_target_sampler() {
   cumulative_target_weights_.clear();
   cumulative_target_weights_.reserve(target_.size());
   total_target_weight_ = 0.0;
+  target_scores_.resize(target_.size());
 
   for (std::size_t index = 0; index < target_.size(); ++index) {
     const auto darkness = (255.0 - static_cast<double>(target_[index])) / 255.0;
@@ -281,7 +282,32 @@ void Optimizer::build_target_sampler() {
     const auto weight = std::max(0.0, darkness * 0.65 + importance * 0.35);
     total_target_weight_ += weight;
     cumulative_target_weights_.push_back(total_target_weight_);
+
+    // Same expression dot_target_score() used to evaluate, so identical bits.
+    const auto score_darkness = 255.0 - static_cast<double>(target_[index]);
+    const auto score_importance = importance_[index] * 255.0;
+    target_scores_[index] = score_darkness * 0.65 + score_importance * 0.35;
   }
+
+  // One bucket per pixel on average keeps each bucket's search to a few steps.
+  const auto bucket_count = cumulative_target_weights_.size();
+  sampler_guide_.resize(bucket_count + 1u);
+  std::size_t position = 0;
+  for (std::size_t bucket = 0; bucket <= bucket_count; ++bucket) {
+    const auto start = bucket < bucket_count ? sampler_bucket_start(bucket)
+                                             : total_target_weight_;
+    while (position < cumulative_target_weights_.size() &&
+           cumulative_target_weights_[position] <= start) {
+      ++position;
+    }
+    sampler_guide_[bucket] = static_cast<std::uint32_t>(position);
+  }
+}
+
+double Optimizer::sampler_bucket_start(std::size_t bucket) const {
+  return total_target_weight_ *
+         (static_cast<double>(bucket) /
+          static_cast<double>(cumulative_target_weights_.size()));
 }
 
 /**
@@ -578,8 +604,26 @@ std::size_t Optimizer::sample_target_index() {
   }
 
   const auto threshold = random_.next_unit() * total_target_weight_;
-  const auto match = std::upper_bound(cumulative_target_weights_.begin(),
-                                      cumulative_target_weights_.end(), threshold);
+
+  // Equivalent to upper_bound over all weights, but searches one bucket.
+  // bucket_start(k) <= threshold < bucket_start(k + 1) guarantees the answer
+  // lies in [guide[k], guide[k + 1]], so the result is exactly the same.
+  const auto bucket_count = cumulative_target_weights_.size();
+  auto bucket = std::min(
+      bucket_count - 1u,
+      static_cast<std::size_t>(threshold / total_target_weight_ *
+                               static_cast<double>(bucket_count)));
+  while (bucket > 0 && threshold < sampler_bucket_start(bucket)) {
+    --bucket;
+  }
+  while (bucket + 1u < bucket_count && threshold >= sampler_bucket_start(bucket + 1u)) {
+    ++bucket;
+  }
+  const auto first = cumulative_target_weights_.begin() + sampler_guide_[bucket];
+  const auto last =
+      cumulative_target_weights_.begin() +
+      static_cast<long>(std::min<std::size_t>(bucket_count, sampler_guide_[bucket + 1u] + 1u));
+  const auto match = std::upper_bound(first, last, threshold);
   if (match == cumulative_target_weights_.end()) {
     return cumulative_target_weights_.size() - 1u;
   }
@@ -630,11 +674,7 @@ double Optimizer::dot_target_score(const Dot& dot) const {
     return 0.0;
   }
 
-  const auto index = static_cast<std::size_t>(y * width_ + x);
-  const auto darkness = 255.0 - static_cast<double>(target_[index]);
-  const auto importance =
-      index < importance_.size() ? importance_[index] * 255.0 : 0.0;
-  return darkness * 0.65 + importance * 0.35;
+  return target_scores_[static_cast<std::size_t>(y * width_ + x)];
 }
 
 Dot Optimizer::random_dot() {

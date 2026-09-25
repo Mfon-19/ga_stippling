@@ -8,8 +8,10 @@
 namespace stippling {
 
 /**
- * Black/white raster with per-pixel coverage counts, so erasing one dot leaves
- * pixels that other dots still cover black. Tracks squared error incrementally.
+ * Per-pixel coverage counts; a pixel is black exactly when its count is > 0, so
+ * erasing one dot leaves pixels that other dots still cover black. Only counts
+ * are stored, which keeps candidate copies small. Tracks squared error
+ * incrementally.
  */
 class RasterGrid {
  public:
@@ -26,14 +28,15 @@ class RasterGrid {
 
   [[nodiscard]] std::uint64_t squared_error(
       const std::vector<std::uint8_t>& target) const;
-  [[nodiscard]] const std::vector<std::uint8_t>& pixels() const noexcept;
+  /** Rendered image (0 = black, 255 = white), built on demand. */
+  [[nodiscard]] std::vector<std::uint8_t> pixels() const;
+  [[nodiscard]] const std::vector<std::uint16_t>& coverage() const noexcept;
   [[nodiscard]] int width() const noexcept;
   [[nodiscard]] int height() const noexcept;
 
  private:
   int width_;
   int height_;
-  std::vector<std::uint8_t> pixels_;
   std::vector<std::uint16_t> coverage_;
 
   void rasterize_dot(const Dot& dot,
