@@ -7,6 +7,7 @@
 
 #include "stippling/engine/dot.hpp"
 #include "stippling/engine/export.hpp"
+#include "stippling/engine/worker_pool.hpp"
 
 namespace stippling {
 
@@ -42,6 +43,8 @@ struct EngineConfig {
   std::uint32_t generations_per_batch{1};
   // When full, every other frame is dropped so frames stay evenly spaced.
   std::uint32_t timelapse_max_frames{60};
+  // Threads used to breed children. Results are the same for any value.
+  std::uint32_t thread_count{1};
 };
 
 struct TargetProcessingConfig {
@@ -122,6 +125,8 @@ class Engine {
   std::vector<PyramidLevel> pyramid_{};
   std::size_t current_level_index_{0};
   std::uint32_t total_generations_{0};
+  // Declared before optimizer_ so the optimizer is destroyed first.
+  std::unique_ptr<WorkerPool> pool_{};
   std::unique_ptr<Optimizer> optimizer_{};
   std::vector<TimelapseFrame> timelapse_frames_{};
   std::uint32_t timelapse_stride_{1};

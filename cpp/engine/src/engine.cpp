@@ -458,6 +458,14 @@ bool Engine::has_optimizer() const noexcept {
 void Engine::configure(const EngineConfig& config) {
   config_ = config;
   reset_run_state();
+
+  const auto threads = std::max<std::uint32_t>(1u, config_.thread_count);
+  if (threads == 1u) {
+    pool_.reset();
+  } else if (!pool_ || pool_->thread_count() != threads) {
+    pool_.reset();
+    pool_ = std::make_unique<WorkerPool>(threads);
+  }
 }
 
 void Engine::reset_run_state() {
@@ -580,6 +588,7 @@ void Engine::initialize_level_optimizer(const std::vector<Dot>& seed_dots) {
         level.width, level.height, level.target, level.importance, level_config,
         seed_dots);
   }
+  optimizer_->set_worker_pool(pool_.get());
   optimizer_->initialize();
 }
 

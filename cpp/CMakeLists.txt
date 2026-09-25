@@ -17,44 +17,66 @@ set(
   engine/src/export.cpp
   engine/src/optimizer.cpp
   engine/src/raster_grid.cpp
+  engine/src/worker_pool.cpp
 )
 
 if(EMSCRIPTEN)
-  # The browser worker consumes a single-file ES module so Vite can import the
-  # generated runtime without managing a separate wasm asset path.
-  add_executable(stippling_engine_wasm ${STIPPLING_ENGINE_SOURCES})
-  target_include_directories(stippling_engine_wasm PRIVATE engine/include)
-  # Without this, Emscripten can't catch exceptions and every engine error
-  # aborts the module. Legacy encoding: Chrome 95+, Firefox 100+, Safari 15.2+.
-  target_compile_options(stippling_engine_wasm PRIVATE -fwasm-exceptions
-                                                       -sWASM_LEGACY_EXCEPTIONS=1)
-  set_target_properties(
-    stippling_engine_wasm
-    PROPERTIES
-      OUTPUT_NAME "stipplingEngine"
-      SUFFIX ".js"
-      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/../src/wasm/generated"
-  )
+  # Two single-file ES modules (so Vite can import them without a separate
+  # .wasm asset): a threaded build for cross-origin isolated pages, and a
+  # single-threaded fallback. Both produce the same results.
+  function(add_stippling_wasm target output_name)
+    add_executable(${target} ${STIPPLING_ENGINE_SOURCES})
+    target_include_directories(${target} PRIVATE engine/include)
+    # Without this, Emscripten can't catch exceptions and every engine error
+    # aborts the module. Legacy encoding: Chrome 95+, Firefox 100+, Safari 15.2+.
+    target_compile_options(${target} PRIVATE -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1)
+    set_target_properties(
+      ${target}
+      PROPERTIES
+        OUTPUT_NAME "${output_name}"
+        SUFFIX ".js"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/../src/wasm/generated"
+    )
+    target_link_options(
+      ${target}
+      PRIVATE
+        "--no-entry"
+        "-sMODULARIZE=1"
+        "-sEXPORT_ES6=1"
+        "-sSINGLE_FILE=1"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sFILESYSTEM=0"
+        "-sEXPORT_NAME=createStipplingEngineModule"
+        "-fwasm-exceptions"
+        "-sWASM_LEGACY_EXCEPTIONS=1"
+        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_stippling_engine_create','_stippling_engine_destroy','_stippling_engine_configure','_stippling_engine_prepare_target_rgba8','_stippling_engine_initialize_optimizer','_stippling_engine_evolve_batch','_stippling_engine_prepared_image_width','_stippling_engine_prepared_image_height','_stippling_engine_prepared_image_byte_length','_stippling_engine_copy_prepared_image_rgba8','_stippling_engine_target_black_pixels','_stippling_engine_target_total_pixels','_stippling_engine_target_black_percentage','_stippling_engine_target_recommended_dot_count','_stippling_engine_capture_best_dots','_stippling_engine_best_dots_data','_stippling_engine_best_dots_count','_stippling_engine_export','_stippling_engine_export_data','_stippling_engine_export_size','_stippling_engine_optimizer_generation','_stippling_engine_optimizer_best_fitness','_stippling_engine_last_error']"
+        "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','wasmMemory']"
+    )
+  endfunction()
+
+  add_stippling_wasm(stippling_engine_wasm stipplingEngine)
+  target_link_options(stippling_engine_wasm PRIVATE "-sENVIRONMENT=web,worker")
+
+  add_stippling_wasm(stippling_engine_wasm_threads stipplingEngineThreads)
+  target_compile_options(stippling_engine_wasm_threads PRIVATE -pthread)
+  # Workers are created up front: a thread that has to wait for a new worker to
+  # start would deadlock, so running out of pool is an error instead. The
+  # engine uses one thread per core (up to 8), and the caller counts as one.
   target_link_options(
-    stippling_engine_wasm
+    stippling_engine_wasm_threads
     PRIVATE
-      "--no-entry"
-      "-sMODULARIZE=1"
-      "-sEXPORT_ES6=1"
-      "-sSINGLE_FILE=1"
-      "-sALLOW_MEMORY_GROWTH=1"
-      "-sFILESYSTEM=0"
-      "-sENVIRONMENT=web,worker"
-      "-sEXPORT_NAME=createStipplingEngineModule"
-      "-fwasm-exceptions"
-      "-sWASM_LEGACY_EXCEPTIONS=1"
-      "-sEXPORTED_FUNCTIONS=['_malloc','_free','_stippling_engine_create','_stippling_engine_destroy','_stippling_engine_configure','_stippling_engine_prepare_target_rgba8','_stippling_engine_initialize_optimizer','_stippling_engine_evolve_batch','_stippling_engine_prepared_image_width','_stippling_engine_prepared_image_height','_stippling_engine_prepared_image_byte_length','_stippling_engine_copy_prepared_image_rgba8','_stippling_engine_target_black_pixels','_stippling_engine_target_total_pixels','_stippling_engine_target_black_percentage','_stippling_engine_target_recommended_dot_count','_stippling_engine_capture_best_dots','_stippling_engine_best_dots_data','_stippling_engine_best_dots_count','_stippling_engine_export','_stippling_engine_export_data','_stippling_engine_export_size','_stippling_engine_optimizer_generation','_stippling_engine_optimizer_best_fitness','_stippling_engine_last_error']"
-      "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','HEAPU8']"
+      "-pthread"
+      "-sENVIRONMENT=web,worker,node"
+      "-sPTHREAD_POOL_SIZE=Math.min(8,(typeof navigator!='undefined'&&navigator.hardwareConcurrency)||4)-1"
+      "-sPTHREAD_POOL_SIZE_STRICT=2"
   )
   return()
 endif()
 
+find_package(Threads REQUIRED)
+
 add_library(stippling_engine STATIC ${STIPPLING_ENGINE_SOURCES})
+target_link_libraries(stippling_engine PUBLIC Threads::Threads)
 
 target_include_directories(
   stippling_engine

@@ -10,7 +10,7 @@ int main() {
   StipplingEngine* engine = stippling_engine_create();
   CHECK(engine != nullptr);
 
-  CHECK(stippling_engine_configure(engine, 100, 0.2, 2048, 0.7, 42, 1) == 0);
+  CHECK(stippling_engine_configure(engine, 100, 0.2, 2048, 0.7, 42, 1, 2) == 0);
 
   const std::vector<std::uint8_t> rgba_pixels{
       0,   0,   0,   255, 255, 255, 255, 255,

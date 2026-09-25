@@ -44,7 +44,8 @@ int stippling_engine_configure(StipplingEngine* engine,
                                uint32_t dot_count,
                                double elitism_ratio,
                                uint32_t seed,
-                               uint32_t generations_per_batch);
+                               uint32_t generations_per_batch,
+                               uint32_t thread_count);
 int stippling_engine_prepare_target_rgba8(StipplingEngine* engine,
                                           int width,
                                           int height,

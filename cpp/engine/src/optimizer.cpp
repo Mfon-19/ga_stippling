@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -63,9 +64,34 @@ std::size_t island_count_for_population(std::size_t population_size) {
   return 1;
 }
 
+/** splitmix64 finalizer: spreads nearby inputs across the whole 64-bit range. */
+std::uint64_t mix_bits(std::uint64_t value) {
+  value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ull;
+  value = (value ^ (value >> 27u)) * 0x94d049bb133111ebull;
+  return value ^ (value >> 31u);
+}
+
+/**
+ * Seed for the child bred into `slot` this generation. Keyed by the run seed,
+ * the level size (so pyramid levels differ), generation, and slot, so a child
+ * depends only on the current population and its slot.
+ */
+std::uint32_t child_stream_seed(std::uint32_t run_seed,
+                                int width,
+                                int height,
+                                std::uint32_t generation,
+                                std::size_t slot) {
+  auto state = mix_bits(run_seed);
+  state = mix_bits(state ^ (static_cast<std::uint64_t>(width) << 32u) ^
+                   static_cast<std::uint64_t>(height));
+  state = mix_bits(state ^ generation);
+  state = mix_bits(state ^ slot);
+  return static_cast<std::uint32_t>(state ^ (state >> 32u));
+}
+
 }  // namespace
 
-// mulberry32: tiny, fast, and bit-identical in every build.
+// mulberry32: tiny, fast, and the same in every build.
 Optimizer::RandomGenerator::RandomGenerator(std::uint32_t seed)
     : state_(seed) {}
 
@@ -151,18 +177,33 @@ OptimizerProgress Optimizer::evolve_batch() {
     refine_elites(&next_population);
 
     const auto island_count = island_count_for_population(population_.size());
-    while (next_population.size() < config_.population_size) {
-      const auto island_index = island_count == 1
-                                    ? 0u
-                                    : static_cast<std::size_t>(
-                                          next_population.size() % island_count);
-      const auto& parent_a = select_parent(island_index);
-      const auto& parent_b = select_parent(island_index);
-      auto child = make_child(parent_a, parent_b);
-      if (random_.next_unit() < 0.25) {
-        refine_candidate(&child, 2);
+    const auto first_slot = next_population.size();
+    const auto child_count =
+        config_.population_size > first_slot ? config_.population_size - first_slot : 0u;
+    std::vector<std::optional<Candidate>> children(child_count);
+
+    const auto breed = [&](std::size_t offset) {
+      const auto slot = first_slot + offset;
+      RandomGenerator rng(child_stream_seed(config_.seed, width_, height_,
+                                            progress_.generation, slot));
+      const auto island_index = island_count == 1 ? 0u : slot % island_count;
+      const auto& parent_a = select_parent(rng, island_index);
+      const auto& parent_b = select_parent(rng, island_index);
+      auto child = make_child(rng, parent_a, parent_b);
+      if (rng.next_unit() < 0.25) {
+        refine_candidate(rng, &child, 2);
       }
-      next_population.push_back(std::move(child));
+      children[offset].emplace(std::move(child));
+    };
+    if (pool_ != nullptr) {
+      pool_->run(child_count, breed);
+    } else {
+      for (std::size_t offset = 0; offset < child_count; ++offset) {
+        breed(offset);
+      }
+    }
+    for (auto& child : children) {
+      next_population.push_back(std::move(*child));
     }
 
     population_ = std::move(next_population);
@@ -175,6 +216,10 @@ OptimizerProgress Optimizer::evolve_batch() {
   }
 
   return progress_;
+}
+
+void Optimizer::set_worker_pool(WorkerPool* pool) noexcept {
+  pool_ = pool;
 }
 
 bool Optimizer::initialized() const noexcept {
@@ -332,13 +377,13 @@ void Optimizer::initialize_population() {
                                            .y = clamp_position(seed_dot.y, height_),
                                            .radius = clamp_dot_radius(seed_dot.radius),
                                        }
-                                     : local_search_dot(seed_dot, 1.35, 0.10));
+                                     : local_search_dot(random_, seed_dot, 1.35, 0.10));
         continue;
       }
 
       const auto use_guided_seed =
           total_target_weight_ > 0.0 && random_.next_unit() < 0.9;
-      candidate.dots.push_back(use_guided_seed ? guided_dot() : random_dot());
+      candidate.dots.push_back(use_guided_seed ? guided_dot(random_) : random_dot(random_));
     }
 
     population_.push_back(std::move(candidate));
@@ -421,11 +466,11 @@ void Optimizer::apply_restart_strategy_if_needed() {
         champion_dots.size(), std::max<std::size_t>(1u, config_.dot_count / 4u));
     for (std::size_t seed_index = 0; seed_index < champion_seed_count; ++seed_index) {
       replacement.dots.push_back(
-          local_search_dot(champion_dots[seed_index], 2.5, 0.18));
+          local_search_dot(random_, champion_dots[seed_index], 2.5, 0.18));
     }
     while (replacement.dots.size() < config_.dot_count) {
-      replacement.dots.push_back(random_.next_unit() < 0.8 ? guided_dot()
-                                                           : random_dot());
+      replacement.dots.push_back(random_.next_unit() < 0.8 ? guided_dot(random_)
+                                                           : random_dot(random_));
     }
 
     evaluate_candidate(replacement);
@@ -464,7 +509,7 @@ void Optimizer::refine_elites(std::vector<Candidate>* elites) {
 
   const auto refinement_count = std::min<std::size_t>(3u, elites->size());
   for (std::size_t index = 0; index < refinement_count; ++index) {
-    refine_candidate(&(*elites)[index], 5u + index * 2u);
+    refine_candidate(random_, &(*elites)[index], 5u + index * 2u);
   }
 }
 
@@ -472,8 +517,9 @@ void Optimizer::refine_elites(std::vector<Candidate>* elites) {
  * Starts from the fitter parent and imports dots from the other one. Dots have
  * no identity, so each import replaces whichever child dot it most likely helps.
  */
-Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
-                                           const Candidate& parent_b) {
+Optimizer::Candidate Optimizer::make_child(RandomGenerator& rng,
+                                           const Candidate& parent_a,
+                                           const Candidate& parent_b) const {
   const auto& primary_parent =
       parent_a.fitness >= parent_b.fitness ? parent_a : parent_b;
   const auto& secondary_parent =
@@ -484,25 +530,25 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
 
   for (std::size_t attempt = 0; attempt < import_attempts; ++attempt) {
     const auto secondary_index = static_cast<std::size_t>(
-        random_.next_u32() % secondary_parent.dots.size());
+        rng.next_u32() % secondary_parent.dots.size());
     Dot proposal = secondary_parent.dots[secondary_index];
 
-    if (random_.next_unit() < 0.4) {
+    if (rng.next_unit() < 0.4) {
       const auto anchor_index =
-          static_cast<std::size_t>(random_.next_u32() % primary_parent.dots.size());
+          static_cast<std::size_t>(rng.next_u32() % primary_parent.dots.size());
       const auto& anchor_dot = primary_parent.dots[anchor_index];
       proposal.x = clamp_position((proposal.x + anchor_dot.x) * 0.5, width_);
       proposal.y = clamp_position((proposal.y + anchor_dot.y) * 0.5, height_);
       proposal.radius = clamp_dot_radius((proposal.radius + anchor_dot.radius) * 0.5);
-    } else if (random_.next_unit() < 0.65) {
-      proposal = local_search_dot(proposal, mutation_distance_scale() * 0.7, 0.08);
+    } else if (rng.next_unit() < 0.65) {
+      proposal = local_search_dot(rng, proposal, mutation_distance_scale() * 0.7, 0.08);
     }
 
-    const auto replacement_index = find_replacement_index(child, proposal);
+    const auto replacement_index = find_replacement_index(rng, child, proposal);
     const auto current_dot = child.dots[replacement_index];
     const auto current_score = dot_target_score(current_dot);
     const auto proposal_score = dot_target_score(proposal);
-    if (proposal_score + 4.0 < current_score && random_.next_unit() < 0.9) {
+    if (proposal_score + 4.0 < current_score && rng.next_unit() < 0.9) {
       continue;
     }
 
@@ -511,7 +557,7 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
     const auto accept =
         next_error <= child.squared_error ||
         proposal_score > current_score * 1.08 ||
-        random_.next_unit() <
+        rng.next_unit() <
             0.06 + std::min(0.1, stagnation_generations_ * 0.01);
     if (accept) {
       child.squared_error = next_error;
@@ -522,7 +568,7 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
     }
   }
 
-  mutate(child);
+  mutate(rng, child);
   update_candidate_fitness(child);
   return child;
 }
@@ -531,23 +577,24 @@ Optimizer::Candidate Optimizer::make_child(const Candidate& parent_a,
  * Tournament selection, mostly within one island. Global sampling grows with
  * stagnation so breakthroughs can spread across the population.
  */
-const Optimizer::Candidate& Optimizer::select_parent(std::size_t island_index) {
+const Optimizer::Candidate& Optimizer::select_parent(RandomGenerator& rng,
+                                                      std::size_t island_index) const {
   constexpr std::size_t kTournamentSize = 4;
   const auto island_count = island_count_for_population(population_.size());
   const auto island = island_count == 0 ? 0u : island_index % island_count;
   const auto island_start = island * population_.size() / island_count;
   const auto island_end = (island + 1u) * population_.size() / island_count;
   const auto sample_global = island_count == 1 ||
-                             random_.next_unit() <
+                             rng.next_unit() <
                                  0.12 + std::min(0.1, stagnation_generations_ * 0.01);
 
   auto sample_index = [&]() -> std::size_t {
     if (sample_global) {
-      return static_cast<std::size_t>(random_.next_u32() % population_.size());
+      return static_cast<std::size_t>(rng.next_u32() % population_.size());
     }
 
     const auto span = std::max<std::size_t>(1u, island_end - island_start);
-    return island_start + static_cast<std::size_t>(random_.next_u32() % span);
+    return island_start + static_cast<std::size_t>(rng.next_u32() % span);
   };
 
   auto best_index = sample_index();
@@ -598,12 +645,12 @@ void Optimizer::migrate_islands() {
   }
 }
 
-std::size_t Optimizer::sample_target_index() {
+std::size_t Optimizer::sample_target_index(RandomGenerator& rng) const {
   if (total_target_weight_ <= 0.0 || cumulative_target_weights_.empty()) {
-    return static_cast<std::size_t>(random_.next_u32() % target_.size());
+    return static_cast<std::size_t>(rng.next_u32() % target_.size());
   }
 
-  const auto threshold = random_.next_unit() * total_target_weight_;
+  const auto threshold = rng.next_unit() * total_target_weight_;
 
   // Equivalent to upper_bound over all weights, but searches one bucket.
   // bucket_start(k) <= threshold < bucket_start(k + 1) guarantees the answer
@@ -643,8 +690,8 @@ double Optimizer::mutation_distance_scale() const {
 }
 
 // Jitter lets many dots spread through an important region instead of stacking.
-Dot Optimizer::guided_dot() {
-  const auto target_index = sample_target_index();
+Dot Optimizer::guided_dot(RandomGenerator& rng) const {
+  const auto target_index = sample_target_index(rng);
   const auto base_x =
       static_cast<double>(static_cast<int>(target_index % static_cast<std::size_t>(width_)));
   const auto base_y =
@@ -657,12 +704,12 @@ Dot Optimizer::guided_dot() {
 
   return {
       .x = clamp_position(
-          base_x + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, width_),
+          base_x + (rng.next_unit() * 2.0 - 1.0) * jitter_scale, width_),
       .y = clamp_position(
-          base_y + (random_.next_unit() * 2.0 - 1.0) * jitter_scale, height_),
+          base_y + (rng.next_unit() * 2.0 - 1.0) * jitter_scale, height_),
       .radius =
           clamp_dot_radius(0.4 + darkness * 0.35 + importance * 0.25 +
-                       random_.next_unit() * 0.18),
+                       rng.next_unit() * 0.18),
   };
 }
 
@@ -677,18 +724,19 @@ double Optimizer::dot_target_score(const Dot& dot) const {
   return target_scores_[static_cast<std::size_t>(y * width_ + x)];
 }
 
-Dot Optimizer::random_dot() {
+Dot Optimizer::random_dot(RandomGenerator& rng) const {
   return {
-      .x = std::floor(random_.next_unit() * static_cast<double>(width_)),
-      .y = std::floor(random_.next_unit() * static_cast<double>(height_)),
-      .radius = 0.4 + random_.next_unit() * 0.55,
+      .x = std::floor(rng.next_unit() * static_cast<double>(width_)),
+      .y = std::floor(rng.next_unit() * static_cast<double>(height_)),
+      .radius = 0.4 + rng.next_unit() * 0.55,
   };
 }
 
 /** Returns the best of a few nearby samples by target score (not raster error). */
-Dot Optimizer::local_search_dot(const Dot& dot,
+Dot Optimizer::local_search_dot(RandomGenerator& rng,
+                                const Dot& dot,
                                 double distance_scale,
-                                double radius_scale) {
+                                double radius_scale) const {
   auto best_dot = Dot{
       .x = clamp_position(dot.x, width_),
       .y = clamp_position(dot.y, height_),
@@ -698,13 +746,13 @@ Dot Optimizer::local_search_dot(const Dot& dot,
 
   const auto sample_count = 6u;
   for (std::uint32_t sample = 0; sample < sample_count; ++sample) {
-    const auto offset_x = (random_.next_unit() * 2.0 - 1.0) * distance_scale;
-    const auto offset_y = (random_.next_unit() * 2.0 - 1.0) * distance_scale;
+    const auto offset_x = (rng.next_unit() * 2.0 - 1.0) * distance_scale;
+    const auto offset_y = (rng.next_unit() * 2.0 - 1.0) * distance_scale;
     const auto proposal = Dot{
         .x = clamp_position(best_dot.x + offset_x, width_),
         .y = clamp_position(best_dot.y + offset_y, height_),
         .radius = clamp_dot_radius(
-            best_dot.radius + (random_.next_unit() * 2.0 - 1.0) * radius_scale),
+            best_dot.radius + (rng.next_unit() * 2.0 - 1.0) * radius_scale),
     };
     const auto proposal_score = dot_target_score(proposal);
     if (proposal_score > best_score) {
@@ -717,7 +765,8 @@ Dot Optimizer::local_search_dot(const Dot& dot,
 }
 
 /** Prefers a dot overlapping the proposal, otherwise a weak one nearby. */
-std::size_t Optimizer::find_replacement_index(const Candidate& child,
+std::size_t Optimizer::find_replacement_index(RandomGenerator& rng,
+                                              const Candidate& child,
                                               const Dot& proposal) const {
   if (child.dots.empty()) {
     return 0u;
@@ -729,7 +778,7 @@ std::size_t Optimizer::find_replacement_index(const Candidate& child,
 
   for (std::size_t sample = 0; sample < sample_count; ++sample) {
     const auto candidate_index =
-        static_cast<std::size_t>(random_.next_u32() % child.dots.size());
+        static_cast<std::size_t>(rng.next_u32() % child.dots.size());
     const auto& current_dot = child.dots[candidate_index];
     // sqrt is correctly rounded everywhere; std::hypot is not, and would let
     // native and WASM builds disagree about which dot to replace.
@@ -751,16 +800,18 @@ std::size_t Optimizer::find_replacement_index(const Candidate& child,
 }
 
 /** Hill-climbs a few weak dots with local or guided replacements. */
-void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
+void Optimizer::refine_candidate(RandomGenerator& rng,
+                                 Candidate* candidate,
+                                 std::uint32_t attempts) const {
   if (candidate == nullptr || candidate->dots.empty()) {
     return;
   }
 
   for (std::uint32_t attempt = 0; attempt < attempts; ++attempt) {
-    auto index = static_cast<std::size_t>(random_.next_u32() % candidate->dots.size());
+    auto index = static_cast<std::size_t>(rng.next_u32() % candidate->dots.size());
     for (std::uint32_t probe = 0; probe < 3; ++probe) {
       const auto probe_index =
-          static_cast<std::size_t>(random_.next_u32() % candidate->dots.size());
+          static_cast<std::size_t>(rng.next_u32() % candidate->dots.size());
       if (dot_target_score(candidate->dots[probe_index]) <
           dot_target_score(candidate->dots[index])) {
         index = probe_index;
@@ -769,9 +820,9 @@ void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
 
     const auto current_dot = candidate->dots[index];
     const auto proposal =
-        random_.next_unit() < 0.7
-            ? local_search_dot(current_dot, mutation_distance_scale() * 0.6, 0.10)
-            : guided_dot();
+        rng.next_unit() < 0.7
+            ? local_search_dot(rng, current_dot, mutation_distance_scale() * 0.6, 0.10)
+            : guided_dot(rng);
     if (dots_equal(current_dot, proposal)) {
       continue;
     }
@@ -795,25 +846,25 @@ void Optimizer::refine_candidate(Candidate* candidate, std::uint32_t attempts) {
  * Mixes local moves, guided reseeds, and random reseeds. Rate, step size, and
  * the chance of accepting a worse move all grow with stagnation.
  */
-void Optimizer::mutate(Candidate& candidate) {
+void Optimizer::mutate(RandomGenerator& rng, Candidate& candidate) const {
   const auto mutation_rate = adaptive_mutation_rate();
   const auto distance_scale = mutation_distance_scale();
   const auto radius_scale =
       0.12 + std::min(0.35, static_cast<double>(stagnation_generations_) * 0.015);
 
   for (auto& dot : candidate.dots) {
-    if (random_.next_unit() >= mutation_rate) {
+    if (rng.next_unit() >= mutation_rate) {
       continue;
     }
 
     Dot next_dot = dot;
-    const auto mutation_mode = random_.next_unit();
+    const auto mutation_mode = rng.next_unit();
     if (mutation_mode < 0.55) {
-      next_dot = local_search_dot(dot, distance_scale, radius_scale);
+      next_dot = local_search_dot(rng, dot, distance_scale, radius_scale);
     } else if (mutation_mode < 0.85 && total_target_weight_ > 0.0) {
-      next_dot = guided_dot();
+      next_dot = guided_dot(rng);
     } else {
-      next_dot = random_dot();
+      next_dot = random_dot(rng);
     }
 
     if (dots_equal(dot, next_dot)) {
@@ -825,7 +876,7 @@ void Optimizer::mutate(Candidate& candidate) {
     const auto current_score = dot_target_score(dot);
     const auto next_score = dot_target_score(next_dot);
     const auto accept_exploration =
-        random_.next_unit() <
+        rng.next_unit() <
         0.04 + std::min(0.12, static_cast<double>(stagnation_generations_) * 0.01);
 
     if (next_error <= candidate.squared_error || next_score > current_score * 1.05 ||

@@ -87,5 +87,33 @@ int main() {
   CHECK(left.best_dots().front().y == right.best_dots().front().y);
   CHECK(left.best_dots().front().radius == right.best_dots().front().radius);
 
+  // Children get their own random streams, so thread count can't change results.
+  {
+    auto threaded_config = make_engine_config();
+    threaded_config.thread_count = 4;
+    stippling::Engine serial;
+    stippling::Engine threaded;
+    serial.configure(make_engine_config());
+    threaded.configure(threaded_config);
+    (void)serial.prepare_target(make_source_image(), {});
+    (void)threaded.prepare_target(make_source_image(), {});
+    serial.initialize_optimizer();
+    threaded.initialize_optimizer();
+    for (std::uint32_t generation = 1; generation <= 12; ++generation) {
+      const auto serial_progress = serial.evolve_batch();
+      const auto threaded_progress = threaded.evolve_batch();
+      CHECK(serial_progress.best_squared_error == threaded_progress.best_squared_error);
+    }
+    const auto serial_dots = serial.best_dots();
+    const auto threaded_dots = threaded.best_dots();
+    CHECK(serial_dots.size() == threaded_dots.size());
+    for (std::size_t index = 0; index < serial_dots.size(); ++index) {
+      CHECK(serial_dots[index].x == threaded_dots[index].x);
+      CHECK(serial_dots[index].y == threaded_dots[index].y);
+      CHECK(serial_dots[index].radius == threaded_dots[index].radius);
+    }
+    CHECK(threaded.validate_optimizer().valid);
+  }
+
   return 0;
 }

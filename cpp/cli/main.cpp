@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -33,6 +34,7 @@ struct RunOptions {
   std::uint32_t scale{4};
   std::uint32_t max_frames{60};
   std::uint32_t frame_duration_ms{120};
+  std::uint32_t threads{std::max(1u, std::thread::hardware_concurrency())};
   bool validate{false};
   bool include_dots{false};
 };
@@ -88,6 +90,7 @@ void print_usage() {
             << "  --scale <n>\n"
             << "  --max-frames <n>\n"
             << "  --frame-duration-ms <n>\n"
+            << "  --threads <n>   (default: all cores; results don't depend on it)\n"
             << "  --validate\n"
             << "  --include-dots\n\n"
             << "Run-specific outputs:\n"
@@ -299,7 +302,8 @@ std::string report_to_json(const RunResult& result) {
          << "\"seed\":" << result.options.seed << ','
          << "\"blur\":" << result.options.blur << ','
          << "\"threshold\":" << result.options.threshold << ','
-         << "\"scale\":" << result.options.scale << "},";
+         << "\"scale\":" << result.options.scale << ','
+         << "\"threads\":" << result.options.threads << "},";
   stream << "\"target\":{"
          << "\"blackPixels\":" << result.target_stats.black_pixels << ','
          << "\"totalPixels\":" << result.target_stats.total_pixels << ','
@@ -378,6 +382,7 @@ RunResult execute_run(const fs::path& input_path,
       .seed = options.seed,
       .generations_per_batch = 1,
       .timelapse_max_frames = options.max_frames,
+      .thread_count = options.threads,
   });
   engine.initialize_optimizer();
 
@@ -501,6 +506,9 @@ RunOptions parse_run_options(const std::vector<std::string>& args,
       options.threshold = static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));
     } else if (argument == "--scale") {
       options.scale = static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));
+    } else if (argument == "--threads") {
+      options.threads = std::max<std::uint32_t>(
+          1u, static_cast<std::uint32_t>(std::stoul(require_value(args, &index))));
     } else if (argument == "--max-frames") {
       options.max_frames =
           static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));

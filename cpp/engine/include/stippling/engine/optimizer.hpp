@@ -6,6 +6,7 @@
 #include "stippling/engine/dot.hpp"
 #include "stippling/engine/engine.hpp"
 #include "stippling/engine/raster_grid.hpp"
+#include "stippling/engine/worker_pool.hpp"
 
 namespace stippling {
 
@@ -30,6 +31,8 @@ class Optimizer {
             const EngineConfig& config,
             std::vector<Dot> seed_dots);
 
+  /** Breeds children on `pool` when set; results don't depend on thread count. */
+  void set_worker_pool(WorkerPool* pool) noexcept;
   void initialize();
   OptimizerProgress evolve_batch();
 
@@ -69,7 +72,9 @@ class Optimizer {
   std::vector<Dot> seed_dots_{};
   std::vector<Candidate> population_{};
   OptimizerProgress progress_{};
-  mutable RandomGenerator random_;
+  // Serial steps only; each child uses its own generator (see evolve_batch).
+  RandomGenerator random_;
+  WorkerPool* pool_{nullptr};
   std::vector<double> cumulative_target_weights_{};
   // sampler_guide_[k] is where the search for bucket k's weights starts; see
   // sample_target_index().
@@ -91,23 +96,32 @@ class Optimizer {
   void apply_restart_strategy_if_needed();
   std::vector<Candidate> preserve_elites(std::uint32_t elite_count) const;
   void refine_elites(std::vector<Candidate>* elites);
-
-  Candidate make_child(const Candidate& parent_a, const Candidate& parent_b);
-
-  const Candidate& select_parent(std::size_t island_index);
   void migrate_islands();
-  std::size_t sample_target_index();
   double sampler_bucket_start(std::size_t bucket) const;
   double adaptive_mutation_rate() const;
   double mutation_distance_scale() const;
-  Dot guided_dot();
   double dot_target_score(const Dot& dot) const;
-  Dot random_dot();
-  Dot local_search_dot(const Dot& dot, double distance_scale, double radius_scale);
 
-  std::size_t find_replacement_index(const Candidate& child, const Dot& proposal) const;
-  void refine_candidate(Candidate* candidate, std::uint32_t attempts);
-  void mutate(Candidate& candidate);
+  // Everything a child needs is const apart from the generator it's handed, so
+  // children can be bred concurrently.
+  Candidate make_child(RandomGenerator& rng,
+                       const Candidate& parent_a,
+                       const Candidate& parent_b) const;
+  const Candidate& select_parent(RandomGenerator& rng, std::size_t island_index) const;
+  std::size_t sample_target_index(RandomGenerator& rng) const;
+  Dot guided_dot(RandomGenerator& rng) const;
+  Dot random_dot(RandomGenerator& rng) const;
+  Dot local_search_dot(RandomGenerator& rng,
+                       const Dot& dot,
+                       double distance_scale,
+                       double radius_scale) const;
+  std::size_t find_replacement_index(RandomGenerator& rng,
+                                     const Candidate& child,
+                                     const Dot& proposal) const;
+  void refine_candidate(RandomGenerator& rng,
+                        Candidate* candidate,
+                        std::uint32_t attempts) const;
+  void mutate(RandomGenerator& rng, Candidate& candidate) const;
 };
 
 }  // namespace stippling

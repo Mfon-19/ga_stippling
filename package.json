@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "benchmark:raster": "./scripts/run-raster-bench.sh",
-    "build:wasm": "emcmake cmake -S cpp -B cpp/build-wasm -DCMAKE_BUILD_TYPE=Release && cmake --build cpp/build-wasm --target stippling_engine_wasm",
+    "build:wasm": "emcmake cmake -S cpp -B cpp/build-wasm -DCMAKE_BUILD_TYPE=Release && cmake --build cpp/build-wasm --target stippling_engine_wasm stippling_engine_wasm_threads",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && tsc && vite build",
     "parity:check": "npm run build:wasm && cmake -S cpp -B cpp/build && cmake --build cpp/build --target stippling_cli && ./scripts/run-parity.sh",

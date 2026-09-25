@@ -1,6 +1,4 @@
-import createStipplingEngineModule, {
-  GeneratedStipplingEngineModule,
-} from "./generated/stipplingEngine.js";
+import type { GeneratedStipplingEngineModule } from "./generated/stipplingEngine.js";
 import {
   EngineExportFormat,
   EngineRunConfig,
@@ -22,6 +20,9 @@ const EXPORT_FORMAT_CODES: Record<EngineExportFormat, number> = {
 
 /** A native `StipplingDot` is three consecutive f64 values: x, y, radius. */
 const DOT_FIELD_COUNT = 3;
+
+/** Must match PTHREAD_POOL_SIZE in cpp/CMakeLists.txt (pool = threads - 1). */
+const MAX_THREADS = 8;
 
 interface PreparedTargetResult {
   image: SerializedImageBuffer;
@@ -52,6 +53,8 @@ export interface WasmEngineInstance {
 }
 
 export interface WasmEngineModule {
+  /** Threads each engine breeds children on; results don't depend on it. */
+  threadCount: number;
   createEngine(): WasmEngineInstance;
 }
 
@@ -59,7 +62,10 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
   private enginePointer: number;
   private imageLoaded = false;
 
-  constructor(private module: GeneratedStipplingEngineModule) {
+  constructor(
+    private module: GeneratedStipplingEngineModule,
+    private threadCount: number
+  ) {
     this.enginePointer = this.module._stippling_engine_create();
     if (!this.enginePointer) {
       throw new Error("Failed to create the native stippling engine");
@@ -74,7 +80,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     const sourcePointer = this.allocateBytes(sourcePixels.byteLength);
 
     try {
-      this.module.HEAPU8.set(sourcePixels, sourcePointer);
+      this.heap().set(sourcePixels, sourcePointer);
 
       this.assertSuccess(
         this.module._stippling_engine_prepare_target_rgba8(
@@ -123,7 +129,8 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
         config.dotCount,
         config.elitismRatio,
         config.seed >>> 0,
-        config.generationsPerBatch
+        config.generationsPerBatch,
+        this.threadCount
       ),
       "configure the native optimizer"
     );
@@ -165,7 +172,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
 
     const values = new Float64Array(
-      this.module.HEAPU8.buffer,
+      this.module.wasmMemory.buffer,
       this.module._stippling_engine_best_dots_data(this.enginePointer),
       count * DOT_FIELD_COUNT
     );
@@ -198,7 +205,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
 
     const pointer = this.module._stippling_engine_export_data(this.enginePointer);
     const size = this.module._stippling_engine_export_size(this.enginePointer);
-    return this.module.HEAPU8.slice(pointer, pointer + size).buffer;
+    return this.heap().slice(pointer, pointer + size).buffer;
   }
 
   public hasImage(): boolean {
@@ -235,7 +242,7 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
         width,
         height,
         format: "rgba8",
-        pixels: this.module.HEAPU8.slice(
+        pixels: this.heap().slice(
           outputPointer,
           outputPointer + copiedByteLength
         ).buffer,
@@ -243,6 +250,12 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     } finally {
       this.module._free(outputPointer);
     }
+  }
+
+  // Always view the live buffer: in the threaded build memory can grow on
+  // another thread, which leaves Emscripten's cached HEAPU8 view stale here.
+  private heap(): Uint8Array {
+    return new Uint8Array(this.module.wasmMemory.buffer);
   }
 
   private allocateBytes(length: number): number {
@@ -266,9 +279,29 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
   }
 }
 
-export async function loadEngineModule(): Promise<WasmEngineModule> {
-  const module = await createStipplingEngineModule();
+/**
+ * Threads need SharedArrayBuffer, which browsers only allow on cross-origin
+ * isolated pages (COOP/COEP headers); anywhere else, use the single-threaded
+ * build.
+ */
+export function defaultThreadCount(): number {
+  if (!globalThis.crossOriginIsolated) {
+    return 1;
+  }
+  return Math.min(MAX_THREADS, globalThis.navigator?.hardwareConcurrency || 4);
+}
+
+export async function loadEngineModule(
+  threadCount = defaultThreadCount()
+): Promise<WasmEngineModule> {
+  const threads = Math.max(1, Math.min(MAX_THREADS, Math.floor(threadCount)));
+  const { default: createModule } =
+    threads > 1
+      ? await import("./generated/stipplingEngineThreads.js")
+      : await import("./generated/stipplingEngine.js");
+  const module = await createModule();
   return {
-    createEngine: () => new NativeWasmEngineInstance(module),
+    threadCount: threads,
+    createEngine: () => new NativeWasmEngineInstance(module, threads),
   };
 }

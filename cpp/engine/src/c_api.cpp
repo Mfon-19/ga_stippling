@@ -59,7 +59,8 @@ int stippling_engine_configure(StipplingEngine* engine,
                                uint32_t dot_count,
                                double elitism_ratio,
                                uint32_t seed,
-                               uint32_t generations_per_batch) {
+                               uint32_t generations_per_batch,
+                               uint32_t thread_count) {
   return with_error_boundary(engine, [&]() {
     engine->engine.configure({
         .population_size = population_size,
@@ -68,6 +69,7 @@ int stippling_engine_configure(StipplingEngine* engine,
         .elitism_ratio = elitism_ratio,
         .seed = seed,
         .generations_per_batch = generations_per_batch,
+        .thread_count = thread_count,
     });
   });
 }

@@ -11,6 +11,7 @@ cpp/build/
 cpp/build-bench/
 cpp/build-wasm/
 src/wasm/generated/stipplingEngine.js
+src/wasm/generated/stipplingEngineThreads.js
 
 jobs.jpeg
 landscape.avif

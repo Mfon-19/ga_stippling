@@ -1,5 +1,5 @@
 export interface GeneratedStipplingEngineModule {
-  HEAPU8: Uint8Array;
+  wasmMemory: WebAssembly.Memory;
   _malloc(size: number): number;
   _free(pointer: number): void;
   UTF8ToString(pointer: number): string;
@@ -12,7 +12,8 @@ export interface GeneratedStipplingEngineModule {
     dotCount: number,
     elitismRatio: number,
     seed: number,
-    generationsPerBatch: number
+    generationsPerBatch: number,
+    threadCount: number
   ): number;
   _stippling_engine_prepare_target_rgba8(
     enginePointer: number,
