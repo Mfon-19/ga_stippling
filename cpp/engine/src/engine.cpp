@@ -1,23 +1,7 @@
 #include "stippling/engine/engine.hpp"
 
-// engine.cpp owns the native "orchestration" layer for the stippling engine.
-//
-// At a high level, this file is responsible for:
-// - validating and storing the currently loaded source/target image
-// - preprocessing source pixels into the optimizer's working representations
-//   (blurred grayscale target, thresholded preview image, and importance map)
-// - building the fixed multiscale pyramid used by the optimizer
-// - creating and replacing per-level Optimizer instances as the run promotes
-//   from coarse to fine resolutions
-// - projecting best-dot snapshots back into original image coordinates so the
-//   browser UI, CLI, exports, and parity checks all observe one stable space
-// - exposing engine-level metrics, validation, and artifact export helpers
-//
-// The optimizer itself lives in optimizer.cpp and owns population search,
-// crossover, mutation, local search, and incremental fitness bookkeeping.
-// This file sits one level above that logic: it prepares the data the optimizer
-// consumes, decides when to promote between pyramid levels, and presents a
-// stable API to the C ABI, WASM wrapper, browser worker, and native CLI.
+// Preprocessing, the multiscale pyramid, and export. The search at each level
+// lives in optimizer.cpp.
 
 #include <algorithm>
 #include <cmath>
@@ -56,12 +40,6 @@ std::uint8_t clamp_byte(double value) {
   return static_cast<std::uint8_t>(std::clamp(std::round(value), 0.0, 255.0));
 }
 
-/**
- * Normalizes incoming image buffers into the grayscale working channel used by
- * the preprocessing pipeline. The arithmetic intentionally mirrors the
- * benchmark-side TypeScript processor so native and archived baseline runs
- * start from comparable prepared targets.
- */
 std::vector<double> extract_grayscale_channel(const ImageBuffer& image) {
   const auto pixel_count =
       static_cast<std::size_t>(image.width * image.height);
@@ -84,6 +62,21 @@ std::vector<double> extract_grayscale_channel(const ImageBuffer& image) {
   return grayscale;
 }
 
+/**
+ * exp(-a) for a >= 0, using only +, *, and / in a fixed order. libm's exp is
+ * not correctly rounded and differs between platforms (glibc vs. Emscripten's
+ * musl), which would make native and WASM blur targets differently.
+ */
+double portable_exp_negative(double a) {
+  double term = 1.0;
+  double sum = 1.0;
+  for (int n = 1; n < 80 && term > sum * 1e-17; ++n) {
+    term *= a / static_cast<double>(n);
+    sum += term;
+  }
+  return 1.0 / sum;
+}
+
 std::vector<double> build_gaussian_kernel(std::uint32_t blur_amount) {
   if (blur_amount == 0) {
     return {1.0};
@@ -96,7 +89,8 @@ std::vector<double> build_gaussian_kernel(std::uint32_t blur_amount) {
   double weight_sum = 0.0;
 
   for (int offset = -radius; offset <= radius; ++offset) {
-    const auto weight = std::exp(-(offset * offset) / (2.0 * sigma * sigma));
+    const auto weight =
+        portable_exp_negative((offset * offset) / (2.0 * sigma * sigma));
     kernel[static_cast<std::size_t>(offset + radius)] = weight;
     weight_sum += weight;
   }
@@ -108,11 +102,6 @@ std::vector<double> build_gaussian_kernel(std::uint32_t blur_amount) {
   return kernel;
 }
 
-/**
- * Applies the configurable blur as a separable Gaussian pass. The separable
- * form keeps preprocessing cost linear in kernel width while still producing a
- * soft target suitable for thresholding and importance extraction.
- */
 std::vector<double> apply_separable_blur(const std::vector<double>& source,
                                          int width,
                                          int height,
@@ -264,9 +253,8 @@ ImageBuffer rgba_from_grayscale(const std::vector<std::uint8_t>& grayscale,
 }
 
 /**
- * Computes black-pixel coverage and the engine's recommended dot count. The
- * recommendation is driven primarily by total importance mass, then constrained
- * by a global area cap and a small black-pixel floor for sparse silhouettes.
+ * Recommends a dot count from total importance, capped by image area, with a
+ * floor based on black pixels so sparse silhouettes still get enough dots.
  */
 TargetStats calculate_target_stats(const std::vector<std::uint8_t>& thresholded,
                                    const std::vector<double>& importance,
@@ -313,11 +301,8 @@ TargetStats calculate_target_stats(const std::vector<std::uint8_t>& thresholded,
   return stats;
 }
 
-/**
- * Resamples a byte-valued raster with area averaging for multiscale pyramid
- * construction. Averaging preserves coarse coverage better than point
- * sampling, which would alias thin structures away too aggressively.
- */
+// Area averaging, unlike point sampling, keeps thin structures from vanishing
+// at coarse pyramid levels.
 std::vector<std::uint8_t> resample_u8_average(
     const std::vector<std::uint8_t>& source,
     int source_width,
@@ -365,10 +350,6 @@ std::vector<std::uint8_t> resample_u8_average(
   return resized;
 }
 
-/**
- * Resamples the floating-point importance map with area averaging so each
- * coarser pyramid level retains relative importance density.
- */
 std::vector<double> resample_double_average(const std::vector<double>& source,
                                             int source_width,
                                             int source_height,
@@ -415,11 +396,8 @@ std::vector<double> resample_double_average(const std::vector<double>& source,
   return resized;
 }
 
-/**
- * Projects dots between coordinate spaces while preserving their apparent
- * footprint. This is used both for coarse-to-fine promotion and for exposing
- * coarse best-dot snapshots in full-resolution image coordinates.
- */
+// Rescales dots between pixel grids, both for promotion and to report coarse
+// levels at full size.
 std::vector<Dot> scale_dots_between_spaces(const std::vector<Dot>& dots,
                                            int source_width,
                                            int source_height,
@@ -444,7 +422,7 @@ std::vector<Dot> scale_dots_between_spaces(const std::vector<Dot>& dots,
         .y = std::clamp(dot.y * y_scale, 0.0,
                         static_cast<double>(std::max(0, target_height - 1))),
         .radius =
-            std::clamp(dot.radius * radius_scale, 0.35, 1.85),
+            clamp_dot_radius(dot.radius * radius_scale),
     });
   }
 
@@ -453,24 +431,9 @@ std::vector<Dot> scale_dots_between_spaces(const std::vector<Dot>& dots,
 
 }  // namespace
 
-Engine::Engine() {
-  capabilities_.incremental_fitness = true;
-  capabilities_.multiscale = true;
-  capabilities_.benchmark_mode = true;
-  capabilities_.export_svg = true;
-  capabilities_.export_png = true;
-  status_ = EngineStatus::idle;
-}
+Engine::Engine() = default;
 
 Engine::~Engine() = default;
-
-const EngineCapabilities& Engine::capabilities() const noexcept {
-  return capabilities_;
-}
-
-EngineStatus Engine::status() const noexcept {
-  return status_;
-}
 
 const EngineConfig& Engine::config() const noexcept {
   return config_;
@@ -492,47 +455,21 @@ bool Engine::has_optimizer() const noexcept {
   return optimizer_ != nullptr;
 }
 
-/**
- * Stores the active engine configuration and invalidates any optimizer state
- * derived from the previous parameters.
- */
 void Engine::configure(const EngineConfig& config) {
   config_ = config;
-  optimizer_.reset();
-  projected_best_dots_.clear();
-  current_level_index_ = 0;
-  total_generations_ = 0;
-  status_ = has_image() ? EngineStatus::image_loaded : EngineStatus::configured;
+  reset_run_state();
 }
 
-/**
- * Stores a raw source image and clears any prepared target or optimizer state.
- * Loading pixels alone does not imply the image has been preprocessed into an
- * optimization target.
- */
-void Engine::load_image(ImageBuffer image) {
-  if (!image.valid()) {
-    throw std::invalid_argument("ImageBuffer size does not match its format");
-  }
-
-  image_ = std::move(image);
-  optimizer_target_.clear();
-  importance_map_.clear();
-  pyramid_.clear();
-  projected_best_dots_.clear();
+void Engine::reset_run_state() {
   optimizer_.reset();
   current_level_index_ = 0;
   total_generations_ = 0;
-  status_ = EngineStatus::image_loaded;
+  timelapse_frames_.clear();
+  timelapse_stride_ = 1;
 }
 
-/**
- * Converts the source image into the engine's prepared target state:
- * - a quantized blurred raster used by the optimizer
- * - a thresholded rgba preview image exposed to callers
- * - an importance map used for dot allocation and guided proposals
- * Preparing a new target resets all optimizer and multiscale state.
- */
+// The optimizer works on the blurred grayscale target and importance map; the
+// thresholded preview is only for display and dot-count statistics.
 ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
                                    const TargetProcessingConfig& config) {
   if (!source_image.valid()) {
@@ -561,20 +498,11 @@ ImageBuffer Engine::prepare_target(const ImageBuffer& source_image,
                                          source_image.width, source_image.height,
                                          config.max_dot_count);
   pyramid_.clear();
-  projected_best_dots_.clear();
-  optimizer_.reset();
-  current_level_index_ = 0;
-  total_generations_ = 0;
-  status_ = EngineStatus::image_loaded;
+  reset_run_state();
 
   return image_;
 }
 
-/**
- * Builds the fixed deterministic multiscale pyramid and starts the optimizer
- * on the coarsest valid level. Using a fixed schedule keeps browser/WASM and
- * native CLI runs comparable in parity tests and benchmark reports.
- */
 void Engine::initialize_optimizer() {
   if (!has_image() || optimizer_target_.empty() || importance_map_.empty()) {
     throw std::logic_error(
@@ -582,9 +510,7 @@ void Engine::initialize_optimizer() {
   }
 
   pyramid_.clear();
-  projected_best_dots_.clear();
-  current_level_index_ = 0;
-  total_generations_ = 0;
+  reset_run_state();
 
   const std::vector<double> scales = {0.125, 0.25, 0.5, 1.0};
   int previous_width = 0;
@@ -623,13 +549,11 @@ void Engine::initialize_optimizer() {
   }
 
   initialize_level_optimizer({});
+  maybe_capture_timelapse_frame();
 }
 
-/**
- * Creates the Optimizer for the current pyramid level. Dot budget is scaled by
- * level area so coarse passes solve broad structure first, and promoted seed
- * dots are used when advancing from a previous level.
- */
+// Coarse levels get sqrt(area ratio) of the dot budget: enough to lay out the
+// broad structure while staying cheap to search.
 void Engine::initialize_level_optimizer(const std::vector<Dot>& seed_dots) {
   if (current_level_index_ >= pyramid_.size()) {
     throw std::logic_error("Requested pyramid level is out of bounds");
@@ -657,28 +581,20 @@ void Engine::initialize_level_optimizer(const std::vector<Dot>& seed_dots) {
         seed_dots);
   }
   optimizer_->initialize();
-  projected_best_dots_ =
-      project_dots_to_image_space(optimizer_->best_dots(), level.width, level.height);
 }
 
-/**
- * Refreshes the projected full-resolution best snapshot and promotes to the
- * next pyramid level once the current optimizer has spent enough work and
- * reports that its coarse solution is stable enough to refine.
- */
+// Promotion replaces the optimizer with a fresh one for the finer level,
+// seeded with the current best dots.
 void Engine::maybe_promote_level() {
   if (!optimizer_ || current_level_index_ >= pyramid_.size()) {
     return;
   }
 
-  const auto& current_level = pyramid_[current_level_index_];
-  projected_best_dots_ = project_dots_to_image_space(
-      optimizer_->best_dots(), current_level.width, current_level.height);
-
   if (current_level_index_ + 1 >= pyramid_.size()) {
     return;
   }
 
+  const auto& current_level = pyramid_[current_level_index_];
   const auto level_progress = optimizer_->progress();
   const auto minimum_generations_at_level =
       static_cast<std::uint32_t>(2u + current_level_index_);
@@ -695,11 +611,6 @@ void Engine::maybe_promote_level() {
   initialize_level_optimizer(seed_dots);
 }
 
-/**
- * Steps the active optimizer for one configured batch, updates the flattened
- * run-level generation counter, and returns progress in whole-run terms rather
- * than per-level pyramid-local generations.
- */
 OptimizerProgress Engine::evolve_batch() {
   if (!optimizer_) {
     throw std::logic_error("Optimizer has not been initialized");
@@ -708,30 +619,44 @@ OptimizerProgress Engine::evolve_batch() {
   (void)optimizer_->evolve_batch();
   total_generations_ += config_.generations_per_batch;
   maybe_promote_level();
+  maybe_capture_timelapse_frame();
 
   auto progress = optimizer_->progress();
   progress.generation = total_generations_;
   return progress;
 }
 
-/**
- * Returns the current best dots in original image coordinates. While the
- * optimizer is still on a coarse pyramid level, the best solution is projected
- * upward so previews and exports do not need to understand pyramid internals.
- */
-const std::vector<Dot>& Engine::best_dots() const {
+std::vector<Dot> Engine::best_dots() const {
   if (!optimizer_) {
     throw std::logic_error("Optimizer has not been initialized");
   }
 
-  if (current_level_index_ + 1 >= pyramid_.size()) {
-    return optimizer_->best_dots();
+  const auto& current_level = pyramid_[current_level_index_];
+  return project_dots_to_image_space(optimizer_->best_dots(), current_level.width,
+                                     current_level.height);
+}
+
+// Over budget, drop every other frame and double the stride: memory stays
+// bounded however long the run, and frames stay evenly spaced.
+void Engine::maybe_capture_timelapse_frame() {
+  if (config_.timelapse_max_frames == 0 ||
+      total_generations_ % timelapse_stride_ != 0) {
+    return;
   }
 
-  const auto& current_level = pyramid_[current_level_index_];
-  projected_best_dots_ = project_dots_to_image_space(
-      optimizer_->best_dots(), current_level.width, current_level.height);
-  return projected_best_dots_;
+  timelapse_frames_.push_back({.generation = total_generations_, .dots = best_dots()});
+  if (timelapse_frames_.size() <= config_.timelapse_max_frames) {
+    return;
+  }
+
+  timelapse_stride_ *= 2u;
+  std::erase_if(timelapse_frames_, [&](const TimelapseFrame& frame) {
+    return frame.generation % timelapse_stride_ != 0;
+  });
+}
+
+const std::vector<TimelapseFrame>& Engine::timelapse_frames() const noexcept {
+  return timelapse_frames_;
 }
 
 OptimizerProgress Engine::optimizer_progress() const {
@@ -768,6 +693,20 @@ std::string Engine::export_best_svg(int scale) const {
   return export_dots_to_svg(best_dots(), image_.width, image_.height, scale);
 }
 
+std::string Engine::export_timelapse_svg(int scale,
+                                         std::uint32_t frame_duration_ms) const {
+  if (!optimizer_) {
+    throw std::logic_error("Optimizer has not been initialized");
+  }
+
+  auto frames = timelapse_frames_;
+  if (frames.empty() || frames.back().generation != total_generations_) {
+    frames.push_back({.generation = total_generations_, .dots = best_dots()});
+  }
+  return export_timelapse_to_svg(frames, image_.width, image_.height, scale,
+                                 frame_duration_ms);
+}
+
 std::vector<std::uint8_t> Engine::export_best_png(int scale) const {
   if (!optimizer_) {
     throw std::logic_error("Optimizer has not been initialized");
@@ -784,48 +723,12 @@ std::vector<std::uint8_t> Engine::render_best_grayscale(int scale) const {
   return render_dots_to_grayscale(best_dots(), image_.width, image_.height, scale);
 }
 
-/**
- * Compares the current best rendering against the stored thresholded target.
- * The target is unpacked from the browser-facing rgba8 preview image back into
- * a single-channel raster before computing quality metrics.
- */
 QualityMetrics Engine::best_quality_metrics() const {
   if (!optimizer_) {
     throw std::logic_error("Optimizer has not been initialized");
   }
-  if (image_.format != PixelFormat::rgba8) {
-    throw std::logic_error("Quality metrics require an rgba8 prepared target");
-  }
 
-  const auto thresholded_target = [&]() {
-    std::vector<std::uint8_t> target(
-        static_cast<std::size_t>(image_.width * image_.height), 255u);
-    for (std::size_t index = 0; index < target.size(); ++index) {
-      target[index] = image_.pixels[index * 4u];
-    }
-    return target;
-  }();
-
-  return compute_quality_metrics(thresholded_target, render_best_grayscale());
-}
-
-std::string Engine::status_string() const {
-  return to_string(status_);
-}
-
-std::string to_string(EngineStatus status) {
-  switch (status) {
-    case EngineStatus::booting:
-      return "booting";
-    case EngineStatus::idle:
-      return "idle";
-    case EngineStatus::configured:
-      return "configured";
-    case EngineStatus::image_loaded:
-      return "image_loaded";
-  }
-
-  throw std::invalid_argument("Unknown EngineStatus");
+  return compute_quality_metrics(optimizer_target_, render_best_grayscale());
 }
 
 }  // namespace stippling

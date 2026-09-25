@@ -1,18 +1,16 @@
 import {
+  EngineAckEvent,
+  EngineArtifactEvent,
   EngineCommand,
   EngineEvent,
+  EngineExportFormat,
+  EngineExportOptions,
   EngineProgressEvent,
   EngineReadyEvent,
   EngineRunConfig,
-  EngineSnapshotEvent,
-  EngineStatusEvent,
   SerializedImageBuffer,
   TargetPreparedEvent,
   TargetProcessingConfig,
-  EngineAckEvent,
-  EngineArtifactEvent,
-  EngineExportFormat,
-  EngineExportOptions,
 } from "../shared/engineProtocol";
 
 interface PendingRequest {
@@ -20,17 +18,13 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
-/**
- * Thin browser-side client for the worker boundary.
- * The UI talks to this class instead of posting raw worker messages directly.
- */
+/** Promise-based client for the engine worker; replies are matched by requestId. */
 export class WasmEngineClient {
   private worker: Worker;
   private pendingRequests = new Map<string, PendingRequest>();
   private requestCounter = 0;
 
   public onProgress?: (event: EngineProgressEvent) => void;
-  public onSnapshot?: (event: EngineSnapshotEvent) => void;
 
   constructor() {
     this.worker = new Worker(new URL("../worker/gaWorker.ts", import.meta.url), {
@@ -40,7 +34,6 @@ export class WasmEngineClient {
     this.worker.addEventListener("error", this.handleWorkerError);
   }
 
-  /** Boots the worker and waits for its ready event. */
   public initialize(): Promise<EngineReadyEvent> {
     return this.sendCommand<EngineReadyEvent>({
       type: "init",
@@ -48,15 +41,6 @@ export class WasmEngineClient {
     });
   }
 
-  /** Requests the worker's current status. */
-  public getStatus(): Promise<EngineStatusEvent> {
-    return this.sendCommand<EngineStatusEvent>({
-      type: "request-status",
-      requestId: this.nextRequestId("status"),
-    });
-  }
-
-  /** Sends image pixels and preprocessing config to the worker. */
   public prepareTarget(
     image: SerializedImageBuffer,
     processing: TargetProcessingConfig
@@ -72,11 +56,7 @@ export class WasmEngineClient {
     );
   }
 
-  /** Starts one optimization run inside the worker. */
-  public startRun(
-    runId: string,
-    config: EngineRunConfig
-  ): Promise<EngineAckEvent> {
+  public startRun(runId: string, config: EngineRunConfig): Promise<EngineAckEvent> {
     return this.sendCommand<EngineAckEvent>({
       type: "start-run",
       requestId: this.nextRequestId("start"),
@@ -85,16 +65,6 @@ export class WasmEngineClient {
     });
   }
 
-  /** Pauses the current worker run. */
-  public pauseRun(runId: string): Promise<EngineAckEvent> {
-    return this.sendCommand<EngineAckEvent>({
-      type: "pause-run",
-      requestId: this.nextRequestId("pause"),
-      runId,
-    });
-  }
-
-  /** Stops the current worker run. */
   public stopRun(runId: string): Promise<EngineAckEvent> {
     return this.sendCommand<EngineAckEvent>({
       type: "stop-run",
@@ -103,22 +73,6 @@ export class WasmEngineClient {
     });
   }
 
-  /** Requests an explicit snapshot from the worker. */
-  public requestSnapshot(
-    runId: string,
-    includeDots = true,
-    includeRaster = false
-  ): Promise<EngineSnapshotEvent> {
-    return this.sendCommand<EngineSnapshotEvent>({
-      type: "request-snapshot",
-      requestId: this.nextRequestId("snapshot"),
-      runId,
-      includeDots,
-      includeRaster,
-    });
-  }
-
-  /** Requests an exported artifact from the worker. */
   public exportArtifact(
     runId: string,
     format: EngineExportFormat,
@@ -133,7 +87,6 @@ export class WasmEngineClient {
     });
   }
 
-  /** Tears down the worker and rejects any outstanding requests. */
   public terminate(): void {
     this.worker.removeEventListener("message", this.handleMessage);
     this.worker.removeEventListener("error", this.handleWorkerError);
@@ -141,7 +94,6 @@ export class WasmEngineClient {
     this.worker.terminate();
   }
 
-  /** Sends one command and resolves the matching response event. */
   private sendCommand<TEvent extends EngineEvent>(
     command: EngineCommand,
     transferables: Transferable[] = []
@@ -155,7 +107,6 @@ export class WasmEngineClient {
     });
   }
 
-  /** Routes worker messages to request promises or live callbacks. */
   private handleMessage = (event: MessageEvent<EngineEvent>): void => {
     const message = event.data;
 
@@ -164,40 +115,33 @@ export class WasmEngineClient {
       return;
     }
 
-    if (message.type === "snapshot") {
-      this.onSnapshot?.(message);
+    if (!message.requestId) {
+      return;
     }
 
-    if ("requestId" in message && message.requestId) {
-      const pending = this.pendingRequests.get(message.requestId);
-      if (!pending) {
-        return;
-      }
-
-      this.pendingRequests.delete(message.requestId);
-
-      if (message.type === "error") {
-        pending.reject(new Error(message.message));
-        return;
-      }
-
-      pending.resolve(message);
+    const pending = this.pendingRequests.get(message.requestId);
+    if (!pending) {
+      return;
     }
+
+    this.pendingRequests.delete(message.requestId);
+    if (message.type === "error") {
+      pending.reject(new Error(message.message));
+      return;
+    }
+    pending.resolve(message);
   };
 
-  /** Converts worker bootstrap failures into rejected requests. */
   private handleWorkerError = (event: ErrorEvent): void => {
     const errorMessage = event.message || "Engine worker bootstrap failed";
     this.rejectPending(new Error(errorMessage));
   };
 
-  /** Produces unique request ids for the worker protocol. */
   private nextRequestId(prefix: string): string {
     this.requestCounter += 1;
     return `${prefix}-${this.requestCounter}`;
   }
 
-  /** Rejects all pending requests with the same terminal error. */
   private rejectPending(error: Error): void {
     for (const pending of this.pendingRequests.values()) {
       pending.reject(error);

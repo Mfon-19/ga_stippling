@@ -6,6 +6,7 @@ benchmarks/
 benchmarks/results/
 docs/
 fixtures/
+scripts/
 cpp/build/
 cpp/build-bench/
 cpp/build-wasm/

@@ -2,38 +2,39 @@ import {
   EngineArtifactEvent,
   EngineExportFormat,
   EngineExportOptions,
-  EngineRunMetrics,
+  EngineProgressEvent,
   EngineRunConfig,
-  EngineSnapshotEvent,
-  TargetPreparedEvent,
   SerializedImageBuffer,
+  TargetPreparedEvent,
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
-import { TimelapseFrame, createTextArtifact, renderTimelapseSvg } from "../shared/stippleExport";
 import { WasmEngineInstance } from "../wasm/engineModule";
-import { BackendCallbacks, WorkerEngineBackend } from "./WorkerEngineBackend";
 
-/**
- * Worker scheduler around the native WASM engine. The native module owns the
- * heavy compute path; this class owns run lifecycle, throttled snapshots, and
- * browser-facing metrics.
- */
-export class WasmEngineBackend implements WorkerEngineBackend {
+// Generations run in time slices with one progress message each, so message and
+// DOM traffic scale with wall time, not generation speed. Results don't depend
+// on where slices fall.
+const SLICE_BUDGET_MS = 16;
+
+const ARTIFACT_FILES: Record<
+  EngineExportFormat,
+  { mimeType: string; suffix: string }
+> = {
+  svg: { mimeType: "image/svg+xml", suffix: ".svg" },
+  png: { mimeType: "image/png", suffix: ".png" },
+  "timelapse-svg": { mimeType: "image/svg+xml", suffix: "-timelapse.svg" },
+};
+
+/** Run lifecycle and scheduling around the engine, which does all the compute. */
+export class WasmEngineBackend {
   private runId: string | null = null;
   private lastRunId: string | null = null;
-  private generation = 0;
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastSnapshotAt = 0;
+  private lastPreviewAt = 0;
   private currentConfig: EngineRunConfig | null = null;
   private startedAt = 0;
-  private currentSeed = 0;
-  private preparedWidth = 0;
-  private preparedHeight = 0;
-  private timelapseFrames: TimelapseFrame[] = [];
 
   constructor(private engine: WasmEngineInstance) {}
 
-  /** Prepares a target image and resets any previous run state. */
   public prepareTarget(
     image: SerializedImageBuffer,
     processing: TargetProcessingConfig,
@@ -41,8 +42,6 @@ export class WasmEngineBackend implements WorkerEngineBackend {
   ): TargetPreparedEvent {
     this.resetRunState();
     const preparedTarget = this.engine.prepareTarget(image, processing);
-    this.preparedWidth = preparedTarget.image.width;
-    this.preparedHeight = preparedTarget.image.height;
 
     return {
       type: "target-prepared",
@@ -53,212 +52,121 @@ export class WasmEngineBackend implements WorkerEngineBackend {
     };
   }
 
-  /** Configures and starts a new optimization run. */
   public startRun(
     runId: string,
     config: EngineRunConfig,
-    callbacks: BackendCallbacks
+    onProgress: (event: EngineProgressEvent) => void
   ): void {
     if (!this.engine.hasImage()) {
       throw new Error("No image has been loaded into the WASM engine");
     }
 
     this.resetRunState();
-    this.runId = runId;
-    this.lastRunId = runId;
-    this.generation = 0;
-    this.lastSnapshotAt = 0;
-    this.currentConfig = config;
-    this.startedAt = performance.now();
-    this.currentSeed = config.seed;
-    this.timelapseFrames = [];
-
     this.engine.configure(config);
     this.engine.initializeOptimizer();
-    this.captureFrame(0);
-    this.scheduleNextBatch(callbacks);
+    this.runId = runId;
+    this.lastRunId = runId;
+    this.currentConfig = config;
+    this.startedAt = performance.now();
+    this.lastPreviewAt = 0;
+    this.scheduleNextSlice(onProgress);
   }
 
-  /** Pauses future batch scheduling without discarding the engine state. */
-  public pause(): void {
-    if (this.batchTimer !== null) {
-      clearTimeout(this.batchTimer);
-      this.batchTimer = null;
-    }
-  }
-
-  /** Stops the active run while preserving the last result for exports. */
+  /** The stopped run's result stays exportable. */
   public stop(): void {
-    this.pause();
-    this.lastRunId = this.runId ?? this.lastRunId;
+    this.cancelScheduledSlice();
     this.runId = null;
     this.currentConfig = null;
-    this.startedAt = 0;
   }
 
-  /** Reports whether a prepared image is loaded in the engine. */
   public hasImage(): boolean {
     return this.engine.hasImage();
   }
 
-  /** Returns the active run id, or the last completed/stopped run id. */
+  /** The active run, or else the last stopped one. */
   public activeRunId(): string | null {
     return this.runId ?? this.lastRunId;
   }
 
-  /** Creates a snapshot event from the engine's current best dots. */
-  public createSnapshotEvent(requestId: string, runId: string): EngineSnapshotEvent {
-    if (runId !== this.runId && runId !== this.lastRunId) {
-      throw new Error(`Run ${runId} is not active`);
-    }
-
-    return {
-      type: "snapshot",
-      requestId,
-      runId,
-      snapshot: {
-        generation: this.generation,
-        dots: this.engine.getBestDots(),
-      },
-    };
-  }
-
-  /** Exports the current best result in one of the supported artifact formats. */
   public exportArtifact(
     requestId: string,
     runId: string,
     format: EngineExportFormat,
     options?: EngineExportOptions
   ): EngineArtifactEvent {
-    if (runId !== this.runId && runId !== this.lastRunId) {
+    if (runId !== this.activeRunId()) {
       throw new Error(`Run ${runId} is not active`);
     }
 
     const scale = Math.max(1, Math.floor(options?.scale ?? 4));
-
-    switch (format) {
-      case "svg":
-        return createTextArtifact(
-          requestId,
-          runId,
-          format,
-          "image/svg+xml",
-          `stippling-${runId}.svg`,
-          this.engine.exportBestSvg(scale)
-        );
-      case "png":
-        return {
-          type: "artifact",
-          requestId,
-          runId,
-          format,
-          mimeType: "image/png",
-          filename: `stippling-${runId}.png`,
-          data: this.engine.exportBestPng(scale),
-        };
-      case "timelapse-svg":
-        return createTextArtifact(
-          requestId,
-          runId,
-          format,
-          "image/svg+xml",
-          `stippling-${runId}-timelapse.svg`,
-          renderTimelapseSvg(
-            this.timelapseFrames,
-            this.preparedWidth,
-            this.preparedHeight,
-            scale,
-            options?.frameDurationMs ?? 120
-          )
-        );
-      default:
-        throw new Error(`Unsupported export format: ${format satisfies never}`);
-    }
-  }
-
-  /** Disposes the scheduler state and the underlying engine instance. */
-  public dispose(): void {
-    this.resetRunState();
-    this.engine.dispose();
-  }
-
-  /** Schedules the next zero-delay optimization batch. */
-  private scheduleNextBatch(callbacks: BackendCallbacks): void {
-    this.batchTimer = setTimeout(() => {
-      if (!this.runId || !this.currentConfig) {
-        return;
-      }
-
-      const batchStartedAt = performance.now();
-      const progress = this.engine.evolveBatch();
-      const batchDurationMs = performance.now() - batchStartedAt;
-      this.generation = progress.generation;
-      const metrics = this.createRunMetrics(progress.bestFitness, batchDurationMs);
-      this.captureFrame(progress.generation);
-
-      callbacks.onProgress({
-        type: "progress",
-        runId: this.runId,
-        generation: progress.generation,
-        bestFitness: progress.bestFitness,
-        status: "running",
-        metrics,
-      });
-
-      const now = performance.now();
-      if (now - this.lastSnapshotAt >= this.currentConfig.previewIntervalMs) {
-        this.lastSnapshotAt = now;
-        callbacks.onSnapshot(
-          this.createSnapshotEvent(
-            `snapshot-${this.runId}-${progress.generation}`,
-            this.runId
-          )
-        );
-      }
-
-      this.scheduleNextBatch(callbacks);
-    }, 0);
-  }
-
-  /** Builds the metrics payload attached to progress events. */
-  private createRunMetrics(
-    bestFitness: number,
-    batchDurationMs: number
-  ): EngineRunMetrics {
-    const elapsedMs = Math.max(performance.now() - this.startedAt, 0);
-    const generationsPerSecond =
-      batchDurationMs > 0
-        ? (this.currentConfig?.generationsPerBatch ?? 0) / (batchDurationMs / 1000)
-        : 0;
+    const frameDurationMs = Math.max(1, Math.floor(options?.frameDurationMs ?? 120));
+    const file = ARTIFACT_FILES[format];
 
     return {
-      seed: this.currentSeed,
-      elapsedMs,
-      batchDurationMs,
-      generationsPerSecond,
-      bestFitness,
-      // For the first WASM pass we expose current heap capacity as a useful
-      // approximation of native memory pressure.
-      usedHeapBytes: this.engine.heapByteLength(),
+      type: "artifact",
+      requestId,
+      runId,
+      format,
+      mimeType: file.mimeType,
+      filename: `stippling-${runId}${file.suffix}`,
+      data: this.engine.exportArtifact(format, scale, frameDurationMs),
     };
   }
 
-  /** Captures one frame for later timelapse export. */
-  private captureFrame(generation: number): void {
-    this.timelapseFrames.push({
-      generation,
-      dots: this.engine.getBestDots(),
-    });
+  private scheduleNextSlice(onProgress: (event: EngineProgressEvent) => void): void {
+    this.batchTimer = setTimeout(() => {
+      const runId = this.runId;
+      const config = this.currentConfig;
+      if (!runId || !config) {
+        return;
+      }
+
+      const sliceStartedAt = performance.now();
+      let batches = 0;
+      let progress = this.engine.evolveBatch();
+      batches += 1;
+      while (performance.now() - sliceStartedAt < SLICE_BUDGET_MS) {
+        progress = this.engine.evolveBatch();
+        batches += 1;
+      }
+      const now = performance.now();
+      const sliceMs = now - sliceStartedAt;
+
+      const previewDue = now - this.lastPreviewAt >= config.previewIntervalMs;
+      if (previewDue) {
+        this.lastPreviewAt = now;
+      }
+
+      onProgress({
+        type: "progress",
+        runId,
+        generation: progress.generation,
+        metrics: {
+          seed: config.seed,
+          elapsedMs: now - this.startedAt,
+          generationsPerSecond:
+            sliceMs > 0 ? (batches * config.generationsPerBatch) / (sliceMs / 1000) : 0,
+          bestFitness: progress.bestFitness,
+        },
+        dots: previewDue ? this.engine.getBestDots() : undefined,
+      });
+
+      this.scheduleNextSlice(onProgress);
+    }, 0);
   }
 
-  /** Clears the currently scheduled run state. */
+  private cancelScheduledSlice(): void {
+    if (this.batchTimer !== null) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+  }
+
   private resetRunState(): void {
-    this.pause();
+    this.cancelScheduledSlice();
     this.runId = null;
     this.lastRunId = null;
-    this.generation = 0;
     this.currentConfig = null;
     this.startedAt = 0;
-    this.timelapseFrames = [];
   }
 }

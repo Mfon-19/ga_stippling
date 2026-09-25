@@ -6,6 +6,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Native and WASM must give bit-identical results, so no FMA contraction
+# (native builds may fuse a*b+c; WASM can't).
+add_compile_options(-ffp-contract=off)
+
 set(
   STIPPLING_ENGINE_SOURCES
   engine/src/c_api.cpp
@@ -20,6 +24,10 @@ if(EMSCRIPTEN)
   # generated runtime without managing a separate wasm asset path.
   add_executable(stippling_engine_wasm ${STIPPLING_ENGINE_SOURCES})
   target_include_directories(stippling_engine_wasm PRIVATE engine/include)
+  # Without this, Emscripten can't catch exceptions and every engine error
+  # aborts the module. Legacy encoding: Chrome 95+, Firefox 100+, Safari 15.2+.
+  target_compile_options(stippling_engine_wasm PRIVATE -fwasm-exceptions
+                                                       -sWASM_LEGACY_EXCEPTIONS=1)
   set_target_properties(
     stippling_engine_wasm
     PROPERTIES
@@ -38,7 +46,9 @@ if(EMSCRIPTEN)
       "-sFILESYSTEM=0"
       "-sENVIRONMENT=web,worker"
       "-sEXPORT_NAME=createStipplingEngineModule"
-      "-sEXPORTED_FUNCTIONS=['_malloc','_free','_stippling_engine_create','_stippling_engine_destroy','_stippling_engine_configure_values','_stippling_engine_prepare_target_rgba8','_stippling_engine_initialize_optimizer','_stippling_engine_evolve_batch_in_place','_stippling_engine_prepared_image_width','_stippling_engine_prepared_image_height','_stippling_engine_prepared_image_byte_length','_stippling_engine_copy_prepared_image_rgba8','_stippling_engine_target_black_pixels','_stippling_engine_target_total_pixels','_stippling_engine_target_black_percentage','_stippling_engine_target_recommended_dot_count','_stippling_engine_best_dot_count','_stippling_engine_copy_best_dots','_stippling_engine_best_svg_byte_length','_stippling_engine_copy_best_svg','_stippling_engine_best_png_byte_length','_stippling_engine_copy_best_png','_stippling_engine_optimizer_generation','_stippling_engine_optimizer_best_fitness','_stippling_engine_validate_optimizer','_stippling_engine_last_error']"
+      "-fwasm-exceptions"
+      "-sWASM_LEGACY_EXCEPTIONS=1"
+      "-sEXPORTED_FUNCTIONS=['_malloc','_free','_stippling_engine_create','_stippling_engine_destroy','_stippling_engine_configure','_stippling_engine_prepare_target_rgba8','_stippling_engine_initialize_optimizer','_stippling_engine_evolve_batch','_stippling_engine_prepared_image_width','_stippling_engine_prepared_image_height','_stippling_engine_prepared_image_byte_length','_stippling_engine_copy_prepared_image_rgba8','_stippling_engine_target_black_pixels','_stippling_engine_target_total_pixels','_stippling_engine_target_black_percentage','_stippling_engine_target_recommended_dot_count','_stippling_engine_capture_best_dots','_stippling_engine_best_dots_data','_stippling_engine_best_dots_count','_stippling_engine_export','_stippling_engine_export_data','_stippling_engine_export_size','_stippling_engine_optimizer_generation','_stippling_engine_optimizer_best_fitness','_stippling_engine_last_error']"
       "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','HEAPU8']"
   )
   return()

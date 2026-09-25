@@ -1,18 +1,8 @@
 #include "stippling/engine/engine.hpp"
 #include "stippling/engine/export.hpp"
 
-// main.cpp implements the native command-line front end for the stippling
-// engine.
-//
-// At a high level, this file is responsible for:
-// - loading Netpbm fixture images
-// - running one-shot, batch, and benchmark-style optimization jobs
-// - writing SVG, PNG, timelapse, and JSON report artifacts
-// - exposing validation and benchmark metrics outside the browser runtime
-//
-// The CLI is intentionally lightweight and dependency-free so regression tests,
-// CI, and headless benchmark workflows can exercise the same native engine used
-// by the WASM build.
+// Command-line front end: runs the engine on Netpbm images and writes SVG, PNG,
+// timelapse, and JSON reports. Dependency-free on purpose.
 
 #include <chrono>
 #include <filesystem>
@@ -30,7 +20,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/** Runtime options shared by single-run, batch, and benchmark commands. */
 struct RunOptions {
   std::uint32_t generations{10};
   std::uint32_t population{100};
@@ -42,13 +31,12 @@ struct RunOptions {
   std::uint32_t threshold{130};
   std::uint32_t max_dot_count{200000};
   std::uint32_t scale{4};
-  std::uint32_t frame_stride{1};
+  std::uint32_t max_frames{60};
   std::uint32_t frame_duration_ms{120};
   bool validate{false};
   bool include_dots{false};
 };
 
-/** Optional artifact paths emitted by one CLI run. */
 struct RunArtifacts {
   std::optional<fs::path> svg_path{};
   std::optional<fs::path> png_path{};
@@ -56,7 +44,7 @@ struct RunArtifacts {
   std::optional<fs::path> report_path{};
 };
 
-/** Batch-mode artifact switches and optional summary output path. */
+/** Per-file artifacts are only written when --output-dir is given. */
 struct BatchArtifacts {
   bool emit_svg{false};
   bool emit_png{false};
@@ -65,7 +53,6 @@ struct BatchArtifacts {
   std::optional<fs::path> summary_report_path{};
 };
 
-/** Captures one completed CLI run and the metrics/artifacts it produced. */
 struct RunResult {
   fs::path input_path{};
   int width{0};
@@ -85,13 +72,10 @@ struct RunResult {
   RunArtifacts artifacts{};
 };
 
-/** Prints CLI usage information. */
 void print_usage() {
   std::cout << "Usage:\n"
             << "  stippling_cli run --input <image.pgm|ppm> [options]\n"
-            << "  stippling_cli batch --input-dir <dir> --output-dir <dir> [options]\n"
-            << "  stippling_cli benchmark --input <image.pgm|ppm> --report <file|-> [options]\n"
-            << "  stippling_cli benchmark --input-dir <dir> --report <file|-> [options]\n\n"
+            << "  stippling_cli batch --input-dir <dir> [--output-dir <dir>] [options]\n\n"
             << "Common options:\n"
             << "  --generations <n>\n"
             << "  --population <n>\n"
@@ -102,6 +86,8 @@ void print_usage() {
             << "  --blur <n>\n"
             << "  --threshold <n>\n"
             << "  --scale <n>\n"
+            << "  --max-frames <n>\n"
+            << "  --frame-duration-ms <n>\n"
             << "  --validate\n"
             << "  --include-dots\n\n"
             << "Run-specific outputs:\n"
@@ -117,7 +103,6 @@ void print_usage() {
             << "  --report <file|->\n";
 }
 
-/** Escapes a string for inclusion in JSON output. */
 std::string json_escape(std::string_view value) {
   std::ostringstream stream;
   for (const auto character : value) {
@@ -145,7 +130,6 @@ std::string json_escape(std::string_view value) {
   return stream.str();
 }
 
-/** Reads the next non-comment token from a Netpbm stream. */
 std::string next_token(std::istream& stream) {
   std::string token;
 
@@ -161,7 +145,7 @@ std::string next_token(std::istream& stream) {
   throw std::runtime_error("Unexpected end of image header");
 }
 
-/** Loads a simple Netpbm image fixture and expands it into rgba8 pixels. */
+/** Reads 8-bit P2/P3/P5/P6 Netpbm and expands to rgba8. */
 stippling::ImageBuffer load_netpbm_image(const fs::path& path) {
   std::ifstream input(path, std::ios::binary);
   if (!input) {
@@ -254,7 +238,6 @@ stippling::ImageBuffer load_netpbm_image(const fs::path& path) {
   throw std::runtime_error("Unsupported Netpbm format: " + magic);
 }
 
-/** Writes raw bytes to a file, creating parent directories as needed. */
 void write_bytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {
   fs::create_directories(path.parent_path());
   std::ofstream output(path, std::ios::binary);
@@ -265,7 +248,6 @@ void write_bytes(const fs::path& path, const std::vector<std::uint8_t>& bytes) {
                static_cast<std::streamsize>(bytes.size()));
 }
 
-/** Writes text to a file, creating parent directories as needed. */
 void write_text(const fs::path& path, const std::string& text) {
   fs::create_directories(path.parent_path());
   std::ofstream output(path, std::ios::binary);
@@ -275,7 +257,7 @@ void write_text(const fs::path& path, const std::string& text) {
   output << text;
 }
 
-/** Writes text to a file or stdout when the path is `-`. */
+/** A path of `-` means stdout. */
 void write_optional_text(const std::optional<fs::path>& path, const std::string& text) {
   if (!path) {
     return;
@@ -287,7 +269,6 @@ void write_optional_text(const std::optional<fs::path>& path, const std::string&
   write_text(*path, text);
 }
 
-/** Serializes a dot array into JSON for optional report inclusion. */
 std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
   std::ostringstream stream;
   stream << std::fixed << std::setprecision(12);
@@ -303,7 +284,6 @@ std::string dots_to_json(const std::vector<stippling::Dot>& dots) {
   return stream.str();
 }
 
-/** Serializes one completed run into a machine-readable JSON report. */
 std::string report_to_json(const RunResult& result) {
   std::ostringstream stream;
   stream << std::fixed << std::setprecision(12);
@@ -335,11 +315,10 @@ std::string report_to_json(const RunResult& result) {
   stream << "\"quality\":{"
          << "\"mse\":" << result.quality.mse << ','
          << "\"rmse\":" << result.quality.rmse << ','
-         << "\"psnr\":" << result.quality.psnr << ','
-         << "\"exactPixelRatio\":" << result.quality.exact_pixel_ratio << "},";
+         << "\"psnr\":" << result.quality.psnr << "},";
   stream << "\"timelapse\":{"
          << "\"frames\":" << result.timelapse_frames << ','
-         << "\"frameStride\":" << result.options.frame_stride << ','
+         << "\"maxFrames\":" << result.options.max_frames << ','
          << "\"frameDurationMs\":" << result.options.frame_duration_ms << "},";
   stream << "\"validation\":{"
          << "\"requested\":" << (result.validation_requested ? "true" : "false") << ','
@@ -372,10 +351,6 @@ std::string report_to_json(const RunResult& result) {
   return stream.str();
 }
 
-/**
- * Executes one full engine run from image loading through preprocessing,
- * optimization, optional validation, and optional artifact export.
- */
 RunResult execute_run(const fs::path& input_path,
                       const RunOptions& options,
                       const RunArtifacts& artifacts) {
@@ -402,21 +377,14 @@ RunResult execute_run(const fs::path& input_path,
       .elitism_ratio = options.elitism,
       .seed = options.seed,
       .generations_per_batch = 1,
+      .timelapse_max_frames = options.max_frames,
   });
   engine.initialize_optimizer();
-
-  std::vector<stippling::TimelapseFrame> frames;
-  frames.push_back({.generation = 0, .dots = engine.best_dots()});
 
   const auto started_at = std::chrono::steady_clock::now();
   stippling::OptimizerProgress progress = engine.optimizer_progress();
   for (std::uint32_t generation = 0; generation < options.generations; ++generation) {
     progress = engine.evolve_batch();
-    if (options.frame_stride > 0 &&
-        ((generation + 1) % options.frame_stride == 0 ||
-         generation + 1 == options.generations)) {
-      frames.push_back({.generation = progress.generation, .dots = engine.best_dots()});
-    }
   }
   const auto elapsed_ms = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - started_at)
@@ -431,12 +399,8 @@ RunResult execute_run(const fs::path& input_path,
   }
   if (artifacts.timelapse_path) {
     write_text(*artifacts.timelapse_path,
-               stippling::export_timelapse_to_svg(
-                   frames,
-                   prepared.width,
-                   prepared.height,
-                   static_cast<int>(options.scale),
-                   options.frame_duration_ms));
+               engine.export_timelapse_svg(static_cast<int>(options.scale),
+                                           options.frame_duration_ms));
   }
 
   return {
@@ -457,12 +421,11 @@ RunResult execute_run(const fs::path& input_path,
       .quality = engine.best_quality_metrics(),
       .options = options,
       .best_dots = options.include_dots ? engine.best_dots() : std::vector<stippling::Dot>{},
-      .timelapse_frames = frames.size(),
+      .timelapse_frames = engine.timelapse_frames().size(),
       .artifacts = artifacts,
   };
 }
 
-/** Collects supported Netpbm input files from a directory in sorted order. */
 std::vector<fs::path> collect_input_files(const fs::path& input_dir) {
   std::vector<fs::path> inputs;
 
@@ -481,7 +444,6 @@ std::vector<fs::path> collect_input_files(const fs::path& input_dir) {
   return inputs;
 }
 
-/** Serializes a batch of run results into one summary JSON document. */
 std::string batch_results_to_json(const std::vector<RunResult>& results) {
   std::ostringstream stream;
   stream << "{\"runs\":[";
@@ -495,7 +457,6 @@ std::string batch_results_to_json(const std::vector<RunResult>& results) {
   return stream.str();
 }
 
-/** Returns the value that follows a CLI flag, or throws if it is missing. */
 std::string require_value(const std::vector<std::string>& args, std::size_t* index) {
   if (*index + 1 >= args.size()) {
     throw std::runtime_error("Missing value for " + args[*index]);
@@ -504,7 +465,6 @@ std::string require_value(const std::vector<std::string>& args, std::size_t* ind
   return args[*index];
 }
 
-/** Parses shared CLI options for run, batch, and benchmark commands. */
 RunOptions parse_run_options(const std::vector<std::string>& args,
                              std::size_t start_index,
                              std::optional<fs::path>* input_path,
@@ -541,8 +501,8 @@ RunOptions parse_run_options(const std::vector<std::string>& args,
       options.threshold = static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));
     } else if (argument == "--scale") {
       options.scale = static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));
-    } else if (argument == "--frame-stride") {
-      options.frame_stride =
+    } else if (argument == "--max-frames") {
+      options.max_frames =
           static_cast<std::uint32_t>(std::stoul(require_value(args, &index)));
     } else if (argument == "--frame-duration-ms") {
       options.frame_duration_ms =
@@ -578,7 +538,6 @@ RunOptions parse_run_options(const std::vector<std::string>& args,
 
 }  // namespace
 
-/** Dispatches the native CLI entrypoint. */
 int main(int argc, char** argv) {
   try {
     if (argc < 2) {
@@ -611,58 +570,42 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    if (command == "batch" || command == "benchmark") {
-      if (input_dir) {
-        if (!output_dir && command == "batch") {
-          throw std::runtime_error("batch requires --output-dir");
-        }
-
-        std::vector<RunResult> results;
-        for (const auto& entry : collect_input_files(*input_dir)) {
-          RunArtifacts per_file_artifacts{};
-          if (output_dir) {
-            const auto stem = entry.stem().string();
-            if (batch_artifacts.emit_svg) {
-              per_file_artifacts.svg_path = *output_dir / (stem + ".svg");
-            }
-            if (batch_artifacts.emit_png) {
-              per_file_artifacts.png_path = *output_dir / (stem + ".png");
-            }
-            if (batch_artifacts.emit_timelapse) {
-              per_file_artifacts.timelapse_path =
-                  *output_dir / (stem + ".timelapse.svg");
-            }
-            if (batch_artifacts.emit_report) {
-              per_file_artifacts.report_path = *output_dir / (stem + ".json");
-            }
-          }
-
-          const auto result = execute_run(entry, options, per_file_artifacts);
-          if (per_file_artifacts.report_path) {
-            write_text(*per_file_artifacts.report_path, report_to_json(result));
-          }
-          results.push_back(result);
-        }
-
-        const auto summary = batch_results_to_json(results);
-        if (batch_artifacts.summary_report_path) {
-          write_optional_text(batch_artifacts.summary_report_path, summary);
-        } else {
-          std::cout << summary << '\n';
-        }
-        return 0;
+    if (command == "batch") {
+      if (!input_dir) {
+        throw std::runtime_error("batch requires --input-dir");
       }
 
-      if (!input_path) {
-        throw std::runtime_error(command + " requires --input or --input-dir");
+      std::vector<RunResult> results;
+      for (const auto& entry : collect_input_files(*input_dir)) {
+        RunArtifacts per_file_artifacts{};
+        if (output_dir) {
+          const auto stem = entry.stem().string();
+          if (batch_artifacts.emit_svg) {
+            per_file_artifacts.svg_path = *output_dir / (stem + ".svg");
+          }
+          if (batch_artifacts.emit_png) {
+            per_file_artifacts.png_path = *output_dir / (stem + ".png");
+          }
+          if (batch_artifacts.emit_timelapse) {
+            per_file_artifacts.timelapse_path = *output_dir / (stem + ".timelapse.svg");
+          }
+          if (batch_artifacts.emit_report) {
+            per_file_artifacts.report_path = *output_dir / (stem + ".json");
+          }
+        }
+
+        const auto result = execute_run(entry, options, per_file_artifacts);
+        if (per_file_artifacts.report_path) {
+          write_text(*per_file_artifacts.report_path, report_to_json(result));
+        }
+        results.push_back(result);
       }
 
-      const auto result = execute_run(*input_path, options, artifacts);
-      const auto report = report_to_json(result);
-      if (artifacts.report_path) {
-        write_optional_text(artifacts.report_path, report);
+      const auto summary = batch_results_to_json(results);
+      if (batch_artifacts.summary_report_path) {
+        write_optional_text(batch_artifacts.summary_report_path, summary);
       } else {
-        std::cout << report << '\n';
+        std::cout << summary << '\n';
       }
       return 0;
     }

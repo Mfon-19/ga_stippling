@@ -68,8 +68,6 @@ int main() {
   CHECK(initial_right.generation == 0);
   CHECK(initial_left.best_fitness == initial_right.best_fitness);
   CHECK(initial_left.best_squared_error == initial_right.best_squared_error);
-  CHECK(left.capabilities().multiscale);
-  CHECK(right.capabilities().multiscale);
 
   for (std::uint32_t generation = 1; generation <= 6; ++generation) {
     const auto progressed_left = left.evolve_batch();

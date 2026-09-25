@@ -1,22 +1,7 @@
-// Microbenchmark isolating the engine's central performance claim: incremental
-// raster fitness vs. full re-rasterization, measured inside the same native
-// binary so the result reflects the algorithm rather than a C++ vs. JavaScript
-// language gap.
-//
-// The unit of work is "evaluate the fitness impact of one proposed single-dot
-// change," which is exactly what the genetic algorithm does thousands of times
-// per generation:
-//
-//   * Full redraw (the pre-incremental design): with no persistent raster
-//     state, testing any change forces re-rendering the whole candidate and
-//     recomparing every pixel -> O(dots * footprint + pixels). Implemented as
-//     clear() + draw all dots + squared_error().
-//   * Incremental (this engine): apply_dot_delta_and_update_error() only touches
-//     the pixels under the two dot footprints involved -> O(footprint).
-//
-// Before timing, every cell verifies the incremental error is bit-for-bit equal
-// to a from-scratch full recompute, so the speedup can never come from the
-// incremental path quietly doing less correct work.
+// Times "score one proposed dot change" two ways in the same binary: a full
+// redraw (clear + draw all dots + compare every pixel) versus the incremental
+// apply_dot_delta_and_update_error(). Each cell first checks that both give
+// bit-identical errors, so a speedup can't come from doing less correct work.
 
 #include <algorithm>
 #include <chrono>
@@ -39,25 +24,16 @@ using stippling::RasterGrid;
 
 namespace {
 
-/** Matches the optimizer's supported stipple radius range. */
-double clamp_radius(double value) { return std::clamp(value, 0.35, 1.35); }
-
-/** Counts the pixels a filled circle of the given integer radius covers. */
-int filled_circle_pixels(int radius) {
-  if (radius <= 0) {
-    return 1;
+int dot_footprint_pixels(const Dot& dot, int width, int height) {
+  RasterGrid scratch(width, height);
+  scratch.draw_dot(dot);
+  int covered = 0;
+  for (const auto pixel : scratch.pixels()) {
+    covered += pixel == 0 ? 1 : 0;
   }
-  int total = 0;
-  for (int y = -radius; y <= radius; ++y) {
-    const auto span =
-        static_cast<int>(std::floor(std::sqrt(static_cast<double>(radius) * radius -
-                                              static_cast<double>(y) * y)));
-    total += 2 * span + 1;
-  }
-  return total;
+  return covered;
 }
 
-/** Builds a deterministic grayscale target with smooth structure plus texture. */
 std::vector<std::uint8_t> make_target(int width, int height, std::uint64_t seed) {
   std::mt19937_64 random(seed);
   std::uniform_int_distribution<int> noise(-12, 12);
@@ -80,12 +56,12 @@ std::vector<std::uint8_t> make_target(int width, int height, std::uint64_t seed)
   return target;
 }
 
-/** Generates a population of dots scattered across the image. */
 std::vector<Dot> make_dots(int count, int width, int height, std::uint64_t seed) {
   std::mt19937_64 random(seed);
   std::uniform_real_distribution<double> x_distribution(0.0, width - 1.0);
   std::uniform_real_distribution<double> y_distribution(0.0, height - 1.0);
-  std::uniform_real_distribution<double> radius_distribution(0.35, 1.35);
+  std::uniform_real_distribution<double> radius_distribution(stippling::kMinDotRadius,
+                                                             stippling::kMaxDotRadius);
 
   std::vector<Dot> dots;
   dots.reserve(static_cast<std::size_t>(count));
@@ -106,10 +82,9 @@ Dot perturb(const Dot& dot, int width, int height, std::mt19937_64& random) {
   if (std::floor(x) == std::floor(dot.x) && std::floor(y) == std::floor(dot.y)) {
     x = std::clamp(x + 1.0, 0.0, width - 1.0);
   }
-  return Dot{x, y, clamp_radius(dot.radius + radius_shift(random))};
+  return Dot{x, y, stippling::clamp_dot_radius(dot.radius + radius_shift(random))};
 }
 
-/** Repeats an operation until a minimum wall-clock budget elapses; returns ns/op. */
 template <class Operation>
 double time_ns_per_op(Operation&& operation, double min_seconds, long long min_iters) {
   using clock = std::chrono::steady_clock;
@@ -137,7 +112,6 @@ struct BenchRow {
   bool agrees = false;
 };
 
-/** Renders every dot into a fresh raster, the cost paid without incremental state. */
 void full_redraw(RasterGrid& grid, const std::vector<Dot>& dots,
                  const std::vector<std::uint8_t>& target, std::uint64_t& sink) {
   grid.clear();
@@ -147,10 +121,6 @@ void full_redraw(RasterGrid& grid, const std::vector<Dot>& dots,
   sink ^= grid.squared_error(target);
 }
 
-/**
- * Runs one (image size, dot count) cell: proves incremental == full, then times
- * both fitness-evaluation strategies.
- */
 BenchRow run_cell(const std::string& sweep, int width, int height, int dot_count) {
   const std::uint64_t seed = 0x9E3779B97F4A7C15ull ^
                              (static_cast<std::uint64_t>(width) << 32) ^
@@ -166,13 +136,15 @@ BenchRow run_cell(const std::string& sweep, int width, int height, int dot_count
   row.pixels = static_cast<long long>(width) * height;
   row.dots = dot_count;
 
+  // Sample footprints on a small canvas so this stays cheap at large sizes.
   double footprint_total = 0.0;
   for (const auto& dot : dots) {
-    footprint_total += filled_circle_pixels(static_cast<int>(std::floor(dot.radius)));
+    const Dot centered{8.0 + (dot.x - std::floor(dot.x)), 8.0 + (dot.y - std::floor(dot.y)),
+                       dot.radius};
+    footprint_total += dot_footprint_pixels(centered, 16, 16);
   }
   row.avg_footprint_px = dots.empty() ? 0.0 : footprint_total / dots.size();
 
-  // Persistent raster holding the full population, used by the incremental path.
   RasterGrid incremental_grid(width, height);
   for (const auto& dot : dots) {
     incremental_grid.draw_dot(dot);
@@ -218,11 +190,8 @@ BenchRow run_cell(const std::string& sweep, int width, int height, int dot_count
     return row;
   }
 
-  // Incremental timing: rotate through every slot, toggling each between its
-  // original dot and a fixed proposal. Cycling all slots averages over the real
-  // footprint distribution (instead of one lucky dot), and tracking the live
-  // state per slot keeps the raster and running error exact with no drift. So
-  // ns/op is the true average cost of evaluating one proposed dot change.
+  // Toggle every slot between its dot and a fixed proposal, so the timing
+  // averages over all footprints and the raster never drifts.
   std::vector<Dot> proposals(dots.size());
   std::vector<Dot> current = dots;
   for (std::size_t index = 0; index < dots.size(); ++index) {
@@ -244,7 +213,6 @@ BenchRow run_cell(const std::string& sweep, int width, int height, int dot_count
       },
       0.30, 16);
 
-  // Full-redraw timing: render the whole candidate and recompare every pixel.
   RasterGrid full_grid(width, height);
   std::uint64_t sink = 0;
   row.full_ns_per_eval = time_ns_per_op(
@@ -345,16 +313,14 @@ int main(int argc, char** argv) {
 
   std::vector<BenchRow> rows;
 
-  // Dot-count sweep at a fixed image size: isolates O(dots) growth of full
-  // redraw while the incremental cost stays flat.
+  // Fixed image size: full redraw grows with dot count.
   const int fixed_width = 512;
   const int fixed_height = 512;
   for (const int dot_count : {250, 500, 1000, 2000, 4000, 8000}) {
     rows.push_back(run_cell("dots", fixed_width, fixed_height, dot_count));
   }
 
-  // Image-size sweep at a fixed dot count: isolates O(pixels) growth of full
-  // redraw's per-evaluation comparison.
+  // Fixed dot count: full redraw grows with pixel count.
   const int fixed_dots = 3000;
   for (const int side : {128, 256, 512, 1024}) {
     rows.push_back(run_cell("image", side, side, fixed_dots));

@@ -1,16 +1,11 @@
-/**
- * Browser-side UI controller for uploads, preprocessing requests, optimization
- * lifecycle, canvas rendering, telemetry, and export actions.
- */
+// UI state and flow: upload, preprocess, run, export. Drawing lives in
+// CanvasManager; engine work lives behind WasmEngineClient.
 import { CanvasManager } from "./CanvasManager";
 import { CONFIG } from "../utils/config";
 import {
-  EngineCapabilities,
+  EngineExportFormat,
   EngineProgressEvent,
   EngineRunConfig,
-  EngineSnapshotEvent,
-  SerializedDot,
-  SerializedImageBuffer,
   TargetPreparedEvent,
   TargetProcessingConfig,
 } from "../shared/engineProtocol";
@@ -24,308 +19,258 @@ export interface UIElements {
   blurValueDisplay: HTMLElement;
   thresholdValueDisplay: HTMLElement;
   fileInput: HTMLInputElement;
-  startButton: HTMLElement;
-  stopButton: HTMLElement;
-  exportSvgButton: HTMLElement;
-  exportPngButton: HTMLElement;
-  exportTimelapseButton: HTMLElement;
+  startButton: HTMLButtonElement;
+  stopButton: HTMLButtonElement;
+  exportSvgButton: HTMLButtonElement;
+  exportPngButton: HTMLButtonElement;
+  exportTimelapseButton: HTMLButtonElement;
 }
 
-export interface ProcessingState {
-  currentImage: HTMLImageElement | null;
+interface ProcessingState {
+  imageVersion: number;
   isEvolutionRunning: boolean;
   generations: number;
   recommendedDotCount: number;
   workerRunId: string | null;
-  processingVersion: number;
   activeSeed: number | null;
   bestFitness: number | null;
   generationsPerSecond: number | null;
+  /** Settings key of the target currently prepared in the engine. */
+  preparedKey: string | null;
 }
 
 export class EventHandlers {
-  private canvasManager: CanvasManager;
   private engineClient: WasmEngineClient | null = null;
-  private engineCapabilities: EngineCapabilities | null = null;
-  private elements: UIElements;
-  private state: ProcessingState;
+  private state: ProcessingState = {
+    imageVersion: 0,
+    isEvolutionRunning: false,
+    generations: 0,
+    recommendedDotCount: 0,
+    workerRunId: null,
+    activeSeed: null,
+    bestFitness: null,
+    generationsPerSecond: null,
+    preparedKey: null,
+  };
+  private processingTimer: ReturnType<typeof setTimeout> | null = null;
+  private inFlightProcessing: { key: string; done: Promise<void> } | null = null;
 
-  constructor(canvasManager: CanvasManager, elements: UIElements) {
-    this.canvasManager = canvasManager;
-    this.elements = elements;
-    this.state = {
-      currentImage: null,
-      isEvolutionRunning: false,
-      generations: 0,
-      recommendedDotCount: 0,
-      workerRunId: null,
-      processingVersion: 0,
-      activeSeed: null,
-      bestFitness: null,
-      generationsPerSecond: null,
-    };
-
+  constructor(
+    private canvasManager: CanvasManager,
+    private elements: UIElements
+  ) {
     this.initializeEventListeners();
     this.updateUIState(false);
   }
 
-  /**
-   * Attach the worker-backed engine client after the app finishes bootstrapping.
-   * The legacy TypeScript optimizer has been archived, so the active runtime
-   * path is worker + WASM only.
-   */
-  public setEngineClient(
-    engineClient: WasmEngineClient | null,
-    capabilities: EngineCapabilities | null = null
-  ): void {
+  /** Called once the worker is ready (or with null if it failed to start). */
+  public setEngineClient(engineClient: WasmEngineClient | null): void {
     this.engineClient = engineClient;
-    this.engineCapabilities = capabilities;
     this.updateUIState(this.state.isEvolutionRunning);
-    this.updateExportButtons();
 
     if (!this.engineClient) {
       return;
     }
 
     this.engineClient.onProgress = this.handleWorkerProgress;
-    this.engineClient.onSnapshot = this.handleWorkerSnapshot;
-
-    if (this.state.currentImage && !this.state.isEvolutionRunning) {
+    if (this.state.imageVersion > 0 && !this.state.isEvolutionRunning) {
       void this.processImage();
     }
   }
 
-  /**
-   * Initialize all event listeners
-   */
+  public dispose(): void {
+    this.stopEvolution();
+    this.cancelScheduledProcessing();
+    if (this.engineClient) {
+      this.engineClient.onProgress = undefined;
+    }
+  }
+
   private initializeEventListeners(): void {
-    this.elements.fileInput.addEventListener(
-      "change",
-      this.handleFileInput.bind(this)
+    const { elements } = this;
+    elements.fileInput.addEventListener("change", () => void this.handleFileInput());
+    elements.blurSlider.addEventListener("input", () =>
+      this.handleProcessingSliderInput(elements.blurSlider, elements.blurValueDisplay)
     );
-
-    this.elements.blurSlider.addEventListener(
-      "input",
-      this.handleBlurChange.bind(this)
+    elements.thresholdSlider.addEventListener("input", () =>
+      this.handleProcessingSliderInput(
+        elements.thresholdSlider,
+        elements.thresholdValueDisplay
+      )
     );
-    this.elements.thresholdSlider.addEventListener(
-      "input",
-      this.handleThresholdChange.bind(this)
-    );
-
-    this.elements.dotCountInput.addEventListener(
-      "change",
-      this.handleDotCountChange.bind(this)
-    );
-
-    this.elements.startButton.addEventListener(
+    elements.dotCountInput.addEventListener("change", () => this.handleDotCountChange());
+    elements.startButton.addEventListener("click", () => void this.handleStartEvolution());
+    elements.stopButton.addEventListener("click", () => this.stopEvolution());
+    elements.exportSvgButton.addEventListener("click", () => void this.exportArtifact("svg"));
+    elements.exportPngButton.addEventListener("click", () => void this.exportArtifact("png"));
+    elements.exportTimelapseButton.addEventListener(
       "click",
-      this.handleStartEvolution.bind(this)
-    );
-    this.elements.stopButton.addEventListener(
-      "click",
-      this.handleStopEvolution.bind(this)
-    );
-    this.elements.exportSvgButton.addEventListener(
-      "click",
-      this.handleExportSvg.bind(this)
-    );
-    this.elements.exportPngButton.addEventListener(
-      "click",
-      this.handleExportPng.bind(this)
-    );
-    this.elements.exportTimelapseButton.addEventListener(
-      "click",
-      this.handleExportTimelapse.bind(this)
+      () => void this.exportArtifact("timelapse-svg")
     );
   }
 
-  /**
-   * Handles file input changes
-   */
-  private async handleFileInput(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
+  private async handleFileInput(): Promise<void> {
+    const file = this.elements.fileInput.files?.[0];
     if (!file) return;
 
     try {
-      const image = await this.loadImage(file);
-      this.state.currentImage = image;
-
-      this.canvasManager.resizeCanvases(image.width, image.height);
-
-      const imgCtx = this.canvasManager.getImageContext();
-      imgCtx.drawImage(image, 0, 0);
-
-      // Update viewport footer telemetry
-      this.updateViewportResolution(image.width, image.height);
-
+      const image = await loadImage(file);
+      const { width, height } = this.canvasManager.showSourceImage(
+        image,
+        CONFIG.IMAGE.MAX_DIMENSION
+      );
+      this.state.imageVersion += 1;
+      this.state.preparedKey = null;
+      this.updateViewportResolution(width, height);
       void this.processImage();
     } catch (error) {
       console.error("Error loading image:", error);
     }
   }
 
-  /**
-   * Loads an image file and returns a promise
-   */
-  private loadImage(file: File): Promise<HTMLImageElement> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      const img = new Image();
-
-      reader.onload = (e) => {
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("Failed to load image"));
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsDataURL(file);
-    });
+  // Readout updates immediately; re-preparing waits until input settles.
+  private handleProcessingSliderInput(slider: HTMLInputElement, display: HTMLElement): void {
+    display.textContent = slider.value;
+    this.cancelScheduledProcessing();
+    this.processingTimer = setTimeout(() => {
+      this.processingTimer = null;
+      void this.processImage();
+    }, CONFIG.RUN.PROCESSING_DEBOUNCE_MS);
   }
 
-  /**
-   * Handles blur slider changes
-   */
-  private handleBlurChange(event: Event): void {
-    const value = parseInt((event.target as HTMLInputElement).value);
-    this.elements.blurValueDisplay.textContent = value.toString();
-    void this.processImage();
-  }
-
-  /**
-   * Handles threshold slider changes
-   */
-  private handleThresholdChange(event: Event): void {
-    const value = parseInt((event.target as HTMLInputElement).value);
-    this.elements.thresholdValueDisplay.textContent = value.toString();
-    void this.processImage();
-  }
-
-  /**
-   * Handles manual dot count changes
-   */
-  private handleDotCountChange(event: Event): void {
-    const value = parseInt((event.target as HTMLInputElement).value);
-    this.state.recommendedDotCount = value;
+  private handleDotCountChange(): void {
+    const value = parseInt(this.elements.dotCountInput.value, 10);
+    this.state.recommendedDotCount = Number.isFinite(value) ? Math.max(1, value) : 1;
     this.updateDotCountDisplay();
   }
 
-  /**
-   * Processes the current image with current settings
-   */
-  private async processImage(): Promise<void> {
-    if (!this.state.currentImage) {
+  private cancelScheduledProcessing(): void {
+    if (this.processingTimer !== null) {
+      clearTimeout(this.processingTimer);
+      this.processingTimer = null;
+    }
+  }
+
+  private currentProcessingKey(): string {
+    return `${this.state.imageVersion}:${this.elements.blurSlider.value}:${this.elements.thresholdSlider.value}`;
+  }
+
+  private processImage(): Promise<void> {
+    if (this.state.imageVersion === 0 || !this.engineClient) {
+      return Promise.resolve();
+    }
+
+    const engineClient = this.engineClient;
+    const key = this.currentProcessingKey();
+    const done = (async () => {
+      try {
+        const preparedTarget = await engineClient.prepareTarget(
+          this.canvasManager.getSourceImage(),
+          this.getProcessingConfig()
+        );
+        // Only the newest request may update the UI; older ones were superseded.
+        if (this.inFlightProcessing?.key !== key) {
+          return;
+        }
+        this.state.preparedKey = key;
+        this.applyPreparedTarget(preparedTarget);
+      } catch (error) {
+        console.error("Error processing image:", error);
+      }
+    })();
+
+    this.inFlightProcessing = { key, done };
+    return done;
+  }
+
+  // Skips re-preparing when the engine already holds (or is preparing) this target.
+  private async ensureTargetPrepared(): Promise<void> {
+    this.cancelScheduledProcessing();
+    const key = this.currentProcessingKey();
+    if (this.state.preparedKey === key) {
       return;
     }
-    if (!this.engineClient) {
-      return;
-    }
-
-    const processingVersion = ++this.state.processingVersion;
-    const sourceImage = this.getSourceImageData();
-    const processingConfig = this.getProcessingConfig();
-
-    try {
-      const preparedTarget = await this.engineClient.prepareTarget(
-        this.serializeImageData(sourceImage),
-        processingConfig
-      );
-
-      if (processingVersion !== this.state.processingVersion) {
+    if (this.inFlightProcessing?.key === key) {
+      await this.inFlightProcessing.done;
+      if (this.state.preparedKey === key) {
         return;
       }
-
-      this.applyPreparedTarget(preparedTarget);
-    } catch (error) {
-      console.error("Error processing image:", error);
     }
+    await this.processImage();
   }
 
-  /**
-   * Updates the dot count display
-   */
-  private updateDotCountDisplay(): void {
-    this.elements.dotCountElement.textContent =
-      `Recommended dot count: ${this.state.recommendedDotCount}` +
-      (this.state.generations
-        ? `. Generations: ${this.state.generations}`
-        : "") +
-      (this.state.generationsPerSecond !== null
-        ? `. Speed: ${this.state.generationsPerSecond.toFixed(1)} gen/s`
-        : "") +
-      (this.state.bestFitness !== null
-        ? `. Fitness: ${this.state.bestFitness.toFixed(4)}`
-        : "") +
-      (this.state.activeSeed !== null ? `. Seed: ${this.state.activeSeed}` : "");
-    this.elements.dotCountInput.value =
-      this.state.recommendedDotCount.toString();
+  private getProcessingConfig(): TargetProcessingConfig {
+    return {
+      blurAmount: parseInt(this.elements.blurSlider.value, 10),
+      threshold: parseInt(this.elements.thresholdSlider.value, 10),
+      maxDotCount: CONFIG.IMAGE.MAX_DOT_COUNT,
+    };
   }
 
-  /**
-   * Handles starting the evolution process
-   */
+  private applyPreparedTarget(preparedTarget: TargetPreparedEvent): void {
+    this.canvasManager.showPreparedTarget(preparedTarget.image);
+
+    // Preparing a target resets the engine, so an earlier run can no longer export.
+    this.state.workerRunId = null;
+    this.state.recommendedDotCount = preparedTarget.stats.recommendedDotCount;
+    this.elements.dotCountElement.style.display = "block";
+    this.elements.dotCountInput.style.display = "block";
+    this.updateDotCountDisplay();
+    this.updateExportButtons();
+  }
+
   private async handleStartEvolution(): Promise<void> {
-    if (this.state.isEvolutionRunning || !this.state.currentImage) return;
-    if (!this.engineClient) {
+    if (this.state.isEvolutionRunning || this.state.imageVersion === 0) return;
+    const engineClient = this.engineClient;
+    if (!engineClient) {
       console.error("Cannot start evolution without the WASM worker engine");
       return;
     }
 
     const runConfig = this.createRunConfig();
-    await this.startWorkerEvolution(runConfig);
+    const runId = `run-${Date.now()}`;
+    this.state.isEvolutionRunning = true;
+    this.updateUIState(true);
+
+    try {
+      await this.ensureTargetPrepared();
+      if (!this.state.isEvolutionRunning) {
+        return; // Stopped while the target was still being prepared.
+      }
+      if (this.state.preparedKey !== this.currentProcessingKey()) {
+        throw new Error("The target image could not be prepared");
+      }
+
+      this.state.workerRunId = runId;
+      this.state.generations = 0;
+      this.state.activeSeed = runConfig.seed;
+      this.state.bestFitness = null;
+      this.state.generationsPerSecond = null;
+      await engineClient.startRun(runId, runConfig);
+      this.updateExportButtons();
+    } catch (error) {
+      this.state.workerRunId = null;
+      this.state.isEvolutionRunning = false;
+      this.updateUIState(false);
+      console.error("Failed to start worker evolution:", error);
+    }
   }
 
-  /**
-   * Stops the evolution process
-   */
-  public stopEvolution(): void {
+  // Keeps the run id so the stopped result can still be exported.
+  private stopEvolution(): void {
+    if (!this.state.isEvolutionRunning) {
+      return;
+    }
+
     this.state.isEvolutionRunning = false;
     this.state.bestFitness = null;
     this.state.generationsPerSecond = null;
     if (this.engineClient && this.state.workerRunId) {
-      const runId = this.state.workerRunId;
-      void this.engineClient.stopRun(runId).catch((error) => {
+      void this.engineClient.stopRun(this.state.workerRunId).catch((error) => {
         console.error("Failed to stop worker evolution:", error);
       });
     }
-    this.updateExportButtons();
-  }
-
-  /**
-   * Updates the UI state
-   */
-  private updateUIState(isRunning: boolean): void {
-    const canStart = !isRunning && !!this.engineClient;
-    (this.elements.startButton as HTMLButtonElement).disabled = !canStart;
-    (this.elements.stopButton as HTMLButtonElement).disabled = !isRunning;
-    this.elements.fileInput.disabled = isRunning;
-    this.elements.blurSlider.disabled = isRunning;
-    this.elements.thresholdSlider.disabled = isRunning;
-    this.elements.dotCountInput.disabled = isRunning;
-    this.updateExportButtons();
-
-    document.body.classList.toggle("evolution-running", isRunning);
-  }
-
-  /**
-   * Handles stopping the evolution process
-   */
-  private handleStopEvolution(): void {
-    this.stopEvolution();
     this.updateUIState(false);
-  }
-
-  /**
-   * Cleans up event listeners and resources
-   */
-  public dispose(): void {
-    this.stopEvolution();
-    this.updateUIState(false);
-    if (this.engineClient) {
-      this.engineClient.onProgress = undefined;
-      this.engineClient.onSnapshot = undefined;
-    }
   }
 
   private createRunConfig(): EngineRunConfig {
@@ -336,91 +281,12 @@ export class EventHandlers {
       elitismRatio: CONFIG.GENETIC.ELITISM_RATIO,
       seed: Date.now() >>> 0,
       generationsPerBatch: 1,
-      previewIntervalMs: 100,
-      benchmarkMode: false,
-    };
-  }
-
-  private async startWorkerEvolution(
-    runConfig: EngineRunConfig
-  ): Promise<void> {
-    if (!this.engineClient || !this.state.currentImage) {
-      return;
-    }
-
-    try {
-      await this.processImage();
-
-      const runId = `run-${Date.now()}`;
-      this.state.workerRunId = runId;
-      this.state.isEvolutionRunning = true;
-      this.state.generations = 0;
-      this.state.activeSeed = runConfig.seed;
-      this.state.bestFitness = null;
-      this.state.generationsPerSecond = null;
-      this.updateUIState(true);
-      await this.engineClient.startRun(runId, runConfig);
-      this.updateExportButtons();
-    } catch (error) {
-      this.state.workerRunId = null;
-      this.state.isEvolutionRunning = false;
-      this.updateUIState(false);
-      console.error("Failed to start worker evolution:", error);
-    }
-  }
-
-  private getSourceImageData(): ImageData {
-    const currentImage = this.state.currentImage;
-    if (!currentImage) {
-      throw new Error("No image is loaded");
-    }
-
-    return this.canvasManager.getImageContext().getImageData(
-      0,
-      0,
-      currentImage.width,
-      currentImage.height
-    );
-  }
-
-  private getProcessingConfig(): TargetProcessingConfig {
-    return {
-      blurAmount: parseInt(this.elements.blurSlider.value),
-      threshold: parseInt(this.elements.thresholdSlider.value),
-      maxDotCount: CONFIG.IMAGE.MAX_DOT_COUNT,
-    };
-  }
-
-  private applyPreparedTarget(preparedTarget: TargetPreparedEvent): void {
-    const bwCtx = this.canvasManager.getBWContext();
-    const processedImageData = new ImageData(
-      new Uint8ClampedArray(preparedTarget.image.pixels),
-      preparedTarget.image.width,
-      preparedTarget.image.height
-    );
-    bwCtx.putImageData(processedImageData, 0, 0);
-
-    this.state.workerRunId = null;
-    this.state.recommendedDotCount = preparedTarget.stats.recommendedDotCount;
-    this.elements.dotCountElement.style.display = "block";
-    this.elements.dotCountInput.style.display = "block";
-    this.updateDotCountDisplay();
-    this.updateExportButtons();
-  }
-
-  private serializeImageData(imageData: ImageData): SerializedImageBuffer {
-    const pixelCopy = new Uint8ClampedArray(imageData.data);
-
-    return {
-      width: imageData.width,
-      height: imageData.height,
-      format: "rgba8",
-      pixels: pixelCopy.buffer,
+      previewIntervalMs: CONFIG.RUN.PREVIEW_INTERVAL_MS,
     };
   }
 
   private handleWorkerProgress = (event: EngineProgressEvent): void => {
-    if (event.runId !== this.state.workerRunId) {
+    if (event.runId !== this.state.workerRunId || !this.state.isEvolutionRunning) {
       return;
     }
 
@@ -430,75 +296,12 @@ export class EventHandlers {
     this.state.generationsPerSecond = event.metrics.generationsPerSecond;
     this.updateDotCountDisplay();
     this.updateEvolutionFooter();
+    if (event.dots) {
+      this.canvasManager.drawDots(event.dots);
+    }
   };
 
-  private handleWorkerSnapshot = (event: EngineSnapshotEvent): void => {
-    if (event.runId !== this.state.workerRunId || !event.snapshot.dots) {
-      return;
-    }
-
-    this.drawDots(event.snapshot.dots);
-  };
-
-  private drawDots(dots: SerializedDot[]): void {
-    const evolCtx = this.canvasManager.getEvolContext();
-    const currentImage = this.state.currentImage;
-    if (!currentImage) {
-      return;
-    }
-
-    evolCtx.clearRect(0, 0, currentImage.width, currentImage.height);
-    evolCtx.fillStyle = "white";
-    evolCtx.fillRect(0, 0, currentImage.width, currentImage.height);
-    evolCtx.fillStyle = "black";
-
-    for (const dot of dots) {
-      evolCtx.beginPath();
-      evolCtx.arc(dot.x, dot.y, dot.radius, 0, 2 * Math.PI);
-      evolCtx.fill();
-    }
-  }
-
-  /** Update viewport resolution info */
-  private updateViewportResolution(w: number, h: number): void {
-    const viewports = document.querySelectorAll('.viewport-footer span:first-child');
-    viewports.forEach((el) => {
-      (el as HTMLElement).textContent = `${w} × ${h}`;
-    });
-  }
-
-  /** Update the evolution viewport with live stats */
-  private updateEvolutionFooter(): void {
-    const evolViewport = document.getElementById('viewportEvolution');
-    if (!evolViewport) return;
-    const footerSpans = evolViewport.querySelectorAll('.viewport-footer span');
-    if (footerSpans.length >= 2) {
-      (footerSpans[0] as HTMLElement).textContent = `Gen ${this.state.generations}`;
-      (footerSpans[1] as HTMLElement).textContent = this.state.bestFitness !== null
-        ? `Fitness ${this.state.bestFitness.toFixed(4)}`
-        : '—';
-    }
-  }
-
-  private async handleExportSvg(): Promise<void> {
-    await this.exportArtifact("svg", { scale: 4 });
-  }
-
-  private async handleExportPng(): Promise<void> {
-    await this.exportArtifact("png", { scale: 4 });
-  }
-
-  private async handleExportTimelapse(): Promise<void> {
-    await this.exportArtifact("timelapse-svg", {
-      scale: 4,
-      frameDurationMs: 120,
-    });
-  }
-
-  private async exportArtifact(
-    format: "svg" | "png" | "timelapse-svg",
-    options?: { scale?: number; frameDurationMs?: number }
-  ): Promise<void> {
+  private async exportArtifact(format: EngineExportFormat): Promise<void> {
     if (!this.engineClient || !this.state.workerRunId) {
       return;
     }
@@ -507,34 +310,91 @@ export class EventHandlers {
       const artifact = await this.engineClient.exportArtifact(
         this.state.workerRunId,
         format,
-        options
+        {
+          scale: CONFIG.RUN.EXPORT_SCALE,
+          frameDurationMs: CONFIG.RUN.TIMELAPSE_FRAME_DURATION_MS,
+        }
       );
-      const blob = new Blob([artifact.data], { type: artifact.mimeType });
-      const downloadUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = artifact.filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(downloadUrl);
+      downloadBlob(new Blob([artifact.data], { type: artifact.mimeType }), artifact.filename);
     } catch (error) {
       console.error(`Failed to export ${format}:`, error);
     }
   }
 
+  private updateUIState(isRunning: boolean): void {
+    const { elements } = this;
+    elements.startButton.disabled = isRunning || !this.engineClient;
+    elements.stopButton.disabled = !isRunning;
+    elements.fileInput.disabled = isRunning;
+    elements.blurSlider.disabled = isRunning;
+    elements.thresholdSlider.disabled = isRunning;
+    elements.dotCountInput.disabled = isRunning;
+    this.updateExportButtons();
+
+    document.body.classList.toggle("evolution-running", isRunning);
+  }
+
   private updateExportButtons(): void {
     const canExport = !!this.engineClient && !!this.state.workerRunId;
-    const canExportSvg = canExport && !!this.engineCapabilities?.exportSvg;
-    const canExportPng = canExport && !!this.engineCapabilities?.exportPng;
-    const canExportTimelapse =
-      canExport && !!this.engineCapabilities?.exportTimelapse;
-
-    (this.elements.exportSvgButton as HTMLButtonElement).disabled =
-      !canExportSvg;
-    (this.elements.exportPngButton as HTMLButtonElement).disabled =
-      !canExportPng;
-    (this.elements.exportTimelapseButton as HTMLButtonElement).disabled =
-      !canExportTimelapse;
+    this.elements.exportSvgButton.disabled = !canExport;
+    this.elements.exportPngButton.disabled = !canExport;
+    this.elements.exportTimelapseButton.disabled = !canExport;
   }
+
+  private updateDotCountDisplay(): void {
+    const { state } = this;
+    this.elements.dotCountElement.textContent =
+      `Recommended dot count: ${state.recommendedDotCount}` +
+      (state.generations ? `. Generations: ${state.generations}` : "") +
+      (state.generationsPerSecond !== null
+        ? `. Speed: ${state.generationsPerSecond.toFixed(1)} gen/s`
+        : "") +
+      (state.bestFitness !== null ? `. Fitness: ${state.bestFitness.toFixed(4)}` : "") +
+      (state.activeSeed !== null ? `. Seed: ${state.activeSeed}` : "");
+    this.elements.dotCountInput.value = state.recommendedDotCount.toString();
+  }
+
+  private updateViewportResolution(width: number, height: number): void {
+    document.querySelectorAll<HTMLElement>(".viewport-footer span:first-child").forEach((el) => {
+      el.textContent = `${width} × ${height}`;
+    });
+  }
+
+  private updateEvolutionFooter(): void {
+    const footerSpans = document.querySelectorAll<HTMLElement>(
+      "#viewportEvolution .viewport-footer span"
+    );
+    if (footerSpans.length >= 2) {
+      footerSpans[0].textContent = `Gen ${this.state.generations}`;
+      footerSpans[1].textContent =
+        this.state.bestFitness !== null ? `Fitness ${this.state.bestFitness.toFixed(4)}` : "—";
+    }
+  }
+}
+
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load image"));
+    };
+    image.src = url;
+  });
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

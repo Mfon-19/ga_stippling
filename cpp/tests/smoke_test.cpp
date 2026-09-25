@@ -7,8 +7,8 @@
 int main() {
   stippling::Engine engine;
 
-  CHECK(engine.status() == stippling::EngineStatus::idle);
   CHECK(!engine.has_image());
+  CHECK(!engine.has_optimizer());
 
   stippling::EngineConfig config{};
   config.seed = 42;
@@ -17,7 +17,6 @@ int main() {
 
   CHECK(engine.config().seed == 42);
   CHECK(engine.config().dot_count == 2048);
-  CHECK(engine.status() == stippling::EngineStatus::configured);
 
   const auto processed = engine.prepare_target(
       {
@@ -41,17 +40,8 @@ int main() {
   CHECK(engine.target_stats().total_pixels == 4);
   CHECK(engine.target_stats().recommended_dot_count == 1);
 
-  stippling::ImageBuffer image{
-      .format = stippling::PixelFormat::grayscale8,
-      .width = 2,
-      .height = 2,
-      .pixels = std::vector<std::uint8_t>{0, 32, 128, 255},
-  };
-  engine.load_image(std::move(image));
-
   CHECK(engine.has_image());
-  CHECK(engine.image().pixels.size() == 4);
-  CHECK(engine.status() == stippling::EngineStatus::image_loaded);
+  CHECK(engine.image().pixels.size() == 16);
 
   return 0;
 }

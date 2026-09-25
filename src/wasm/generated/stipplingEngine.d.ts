@@ -5,7 +5,7 @@ export interface GeneratedStipplingEngineModule {
   UTF8ToString(pointer: number): string;
   _stippling_engine_create(): number;
   _stippling_engine_destroy(enginePointer: number): void;
-  _stippling_engine_configure_values(
+  _stippling_engine_configure(
     enginePointer: number,
     populationSize: number,
     mutationRate: number,
@@ -25,7 +25,7 @@ export interface GeneratedStipplingEngineModule {
     maxDotCount: number
   ): number;
   _stippling_engine_initialize_optimizer(enginePointer: number): number;
-  _stippling_engine_evolve_batch_in_place(enginePointer: number): number;
+  _stippling_engine_evolve_batch(enginePointer: number): number;
   _stippling_engine_prepared_image_width(enginePointer: number): number;
   _stippling_engine_prepared_image_height(enginePointer: number): number;
   _stippling_engine_prepared_image_byte_length(enginePointer: number): number;
@@ -38,35 +38,19 @@ export interface GeneratedStipplingEngineModule {
   _stippling_engine_target_total_pixels(enginePointer: number): number;
   _stippling_engine_target_black_percentage(enginePointer: number): number;
   _stippling_engine_target_recommended_dot_count(enginePointer: number): number;
-  _stippling_engine_best_dot_count(enginePointer: number): number;
-  _stippling_engine_copy_best_dots(
+  _stippling_engine_capture_best_dots(enginePointer: number): number;
+  _stippling_engine_best_dots_data(enginePointer: number): number;
+  _stippling_engine_best_dots_count(enginePointer: number): number;
+  _stippling_engine_export(
     enginePointer: number,
-    outputPointer: number,
-    capacity: number
+    format: number,
+    scale: number,
+    frameDurationMs: number
   ): number;
-  _stippling_engine_best_svg_byte_length(
-    enginePointer: number,
-    scale: number
-  ): number;
-  _stippling_engine_copy_best_svg(
-    enginePointer: number,
-    outputPointer: number,
-    capacity: number,
-    scale: number
-  ): number;
-  _stippling_engine_best_png_byte_length(
-    enginePointer: number,
-    scale: number
-  ): number;
-  _stippling_engine_copy_best_png(
-    enginePointer: number,
-    outputPointer: number,
-    capacity: number,
-    scale: number
-  ): number;
+  _stippling_engine_export_data(enginePointer: number): number;
+  _stippling_engine_export_size(enginePointer: number): number;
   _stippling_engine_optimizer_generation(enginePointer: number): number;
   _stippling_engine_optimizer_best_fitness(enginePointer: number): number;
-  _stippling_engine_validate_optimizer(enginePointer: number): number;
   _stippling_engine_last_error(enginePointer: number): number;
 }
 

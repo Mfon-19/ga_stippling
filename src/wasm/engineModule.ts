@@ -2,7 +2,7 @@ import createStipplingEngineModule, {
   GeneratedStipplingEngineModule,
 } from "./generated/stipplingEngine.js";
 import {
-  EngineCapabilities,
+  EngineExportFormat,
   EngineRunConfig,
   SerializedDot,
   SerializedImageBuffer,
@@ -10,14 +10,18 @@ import {
   TargetStats,
 } from "../shared/engineProtocol";
 
-/**
- * Browser/WASM bridge for the native engine.
- *
- * This file owns the thin ABI layer that allocates memory inside the generated
- * Emscripten module, copies image/artifact buffers across the JS/WASM boundary,
- * and exposes a TypeScript-friendly engine interface to the worker backend.
- */
-const DOT_STRIDE_BYTES = 24;
+// Typed wrapper over the engine's C ABI (see c_api.h): copies buffers in and
+// out of WASM memory and turns -1 return codes into thrown Errors.
+
+/** Must match the C `StipplingExportFormat` enum. */
+const EXPORT_FORMAT_CODES: Record<EngineExportFormat, number> = {
+  svg: 0,
+  png: 1,
+  "timelapse-svg": 2,
+};
+
+/** A native `StipplingDot` is three consecutive f64 values: x, y, radius. */
+const DOT_FIELD_COUNT = 3;
 
 interface PreparedTargetResult {
   image: SerializedImageBuffer;
@@ -38,17 +42,17 @@ export interface WasmEngineInstance {
   initializeOptimizer(): void;
   evolveBatch(): OptimizerBatchResult;
   getBestDots(): SerializedDot[];
-  exportBestSvg(scale: number): string;
-  exportBestPng(scale: number): ArrayBuffer;
+  exportArtifact(
+    format: EngineExportFormat,
+    scale: number,
+    frameDurationMs: number
+  ): ArrayBuffer;
   hasImage(): boolean;
-  heapByteLength(): number;
   dispose(): void;
 }
 
 export interface WasmEngineModule {
-  capabilities: EngineCapabilities;
   createEngine(): WasmEngineInstance;
-  dispose(): void;
 }
 
 class NativeWasmEngineInstance implements WasmEngineInstance {
@@ -62,15 +66,10 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
-  /** Copies image bytes into WASM memory and asks the native engine to preprocess them. */
   public prepareTarget(
     image: SerializedImageBuffer,
     processing: TargetProcessingConfig
   ): PreparedTargetResult {
-    if (image.format !== "rgba8") {
-      throw new Error(`Unsupported image format: ${image.format}`);
-    }
-
     const sourcePixels = new Uint8Array(image.pixels);
     const sourcePointer = this.allocateBytes(sourcePixels.byteLength);
 
@@ -115,10 +114,9 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
-  /** Applies one optimizer configuration to the native engine. */
   public configure(config: EngineRunConfig): void {
     this.assertSuccess(
-      this.module._stippling_engine_configure_values(
+      this.module._stippling_engine_configure(
         this.enginePointer,
         config.populationSize,
         config.mutationRate,
@@ -131,7 +129,6 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     );
   }
 
-  /** Initializes the native optimizer for the current prepared target. */
   public initializeOptimizer(): void {
     this.assertSuccess(
       this.module._stippling_engine_initialize_optimizer(this.enginePointer),
@@ -139,10 +136,9 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     );
   }
 
-  /** Advances the native optimizer by one configured batch. */
   public evolveBatch(): OptimizerBatchResult {
     this.assertSuccess(
-      this.module._stippling_engine_evolve_batch_in_place(this.enginePointer),
+      this.module._stippling_engine_evolve_batch(this.enginePointer),
       "advance the native optimizer"
     );
 
@@ -156,106 +152,59 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     };
   }
 
-  /** Copies the current best dots out of WASM memory. */
+  // Reads the handle-owned dot buffer in place: no malloc, no intermediate copy.
   public getBestDots(): SerializedDot[] {
-    const dotCount = this.module._stippling_engine_best_dot_count(
-      this.enginePointer
+    this.assertSuccess(
+      this.module._stippling_engine_capture_best_dots(this.enginePointer),
+      "capture the best dots"
     );
-    if (dotCount === 0) {
+
+    const count = this.module._stippling_engine_best_dots_count(this.enginePointer);
+    if (count === 0) {
       return [];
     }
 
-    const dotsPointer = this.allocateBytes(dotCount * DOT_STRIDE_BYTES);
-
-    try {
-      const copiedCount = this.module._stippling_engine_copy_best_dots(
-        this.enginePointer,
-        dotsPointer,
-        dotCount
-      );
-      const view = new DataView(
-        this.module.HEAPU8.buffer,
-        dotsPointer,
-        copiedCount * DOT_STRIDE_BYTES
-      );
-      const dots: SerializedDot[] = [];
-
-      for (let index = 0; index < copiedCount; index += 1) {
-        const offset = index * DOT_STRIDE_BYTES;
-        dots.push({
-          x: view.getFloat64(offset, true),
-          y: view.getFloat64(offset + 8, true),
-          radius: view.getFloat64(offset + 16, true),
-        });
-      }
-
-      return dots;
-    } finally {
-      this.module._free(dotsPointer);
-    }
-  }
-
-  /** Exports the current best result as SVG text. */
-  public exportBestSvg(scale: number): string {
-    const byteLength = this.module._stippling_engine_best_svg_byte_length(
-      this.enginePointer,
-      scale
+    const values = new Float64Array(
+      this.module.HEAPU8.buffer,
+      this.module._stippling_engine_best_dots_data(this.enginePointer),
+      count * DOT_FIELD_COUNT
     );
-    const outputPointer = this.allocateBytes(byteLength);
-
-    try {
-      const copiedByteLength = this.module._stippling_engine_copy_best_svg(
-        this.enginePointer,
-        outputPointer,
-        byteLength,
-        scale
-      );
-      const bytes = new Uint8Array(copiedByteLength);
-      bytes.set(
-        this.module.HEAPU8.subarray(outputPointer, outputPointer + copiedByteLength)
-      );
-      return new TextDecoder().decode(bytes);
-    } finally {
-      this.module._free(outputPointer);
+    const dots: SerializedDot[] = new Array(count);
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * DOT_FIELD_COUNT;
+      dots[index] = {
+        x: values[offset],
+        y: values[offset + 1],
+        radius: values[offset + 2],
+      };
     }
+    return dots;
   }
 
-  /** Exports the current best result as PNG bytes. */
-  public exportBestPng(scale: number): ArrayBuffer {
-    const byteLength = this.module._stippling_engine_best_png_byte_length(
-      this.enginePointer,
-      scale
+  public exportArtifact(
+    format: EngineExportFormat,
+    scale: number,
+    frameDurationMs: number
+  ): ArrayBuffer {
+    this.assertSuccess(
+      this.module._stippling_engine_export(
+        this.enginePointer,
+        EXPORT_FORMAT_CODES[format],
+        scale,
+        frameDurationMs
+      ),
+      `export ${format}`
     );
-    const outputPointer = this.allocateBytes(byteLength);
 
-    try {
-      const copiedByteLength = this.module._stippling_engine_copy_best_png(
-        this.enginePointer,
-        outputPointer,
-        byteLength,
-        scale
-      );
-      const bytes = new Uint8Array(copiedByteLength);
-      bytes.set(
-        this.module.HEAPU8.subarray(outputPointer, outputPointer + copiedByteLength)
-      );
-      return bytes.buffer;
-    } finally {
-      this.module._free(outputPointer);
-    }
+    const pointer = this.module._stippling_engine_export_data(this.enginePointer);
+    const size = this.module._stippling_engine_export_size(this.enginePointer);
+    return this.module.HEAPU8.slice(pointer, pointer + size).buffer;
   }
 
-  /** Reports whether a target image has already been prepared. */
   public hasImage(): boolean {
     return this.imageLoaded;
   }
 
-  /** Reports the current WASM heap capacity as a coarse memory-pressure metric. */
-  public heapByteLength(): number {
-    return this.module.HEAPU8.byteLength;
-  }
-
-  /** Destroys the native engine handle. */
   public dispose(): void {
     if (this.enginePointer) {
       this.module._stippling_engine_destroy(this.enginePointer);
@@ -263,7 +212,6 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     }
   }
 
-  /** Copies the native prepared preview image out of WASM memory. */
   private copyPreparedImage(): SerializedImageBuffer {
     const width = this.module._stippling_engine_prepared_image_width(
       this.enginePointer
@@ -282,23 +230,21 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
         outputPointer,
         byteLength
       );
-      const pixels = new Uint8ClampedArray(copiedByteLength);
-      pixels.set(
-        this.module.HEAPU8.subarray(outputPointer, outputPointer + copiedByteLength)
-      );
 
       return {
         width,
         height,
         format: "rgba8",
-        pixels: pixels.buffer,
+        pixels: this.module.HEAPU8.slice(
+          outputPointer,
+          outputPointer + copiedByteLength
+        ).buffer,
       };
     } finally {
       this.module._free(outputPointer);
     }
   }
 
-  /** Allocates a raw byte range inside WASM memory. */
   private allocateBytes(length: number): number {
     const pointer = this.module._malloc(Math.max(length, 1));
     if (!pointer) {
@@ -307,7 +253,6 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
     return pointer;
   }
 
-  /** Throws with the native last-error message when a C ABI call fails. */
   private assertSuccess(statusCode: number, action: string): void {
     if (statusCode === 0) {
       return;
@@ -321,32 +266,9 @@ class NativeWasmEngineInstance implements WasmEngineInstance {
   }
 }
 
-class NativeWasmEngineModule implements WasmEngineModule {
-  public readonly capabilities: EngineCapabilities = {
-    backend: "wasm",
-    incrementalFitness: true,
-    multiscale: true,
-    benchmarkMode: true,
-    exportSvg: true,
-    exportPng: true,
-    exportTimelapse: true,
-  };
-
-  constructor(private module: GeneratedStipplingEngineModule) {}
-
-  /** Creates one engine handle backed by the generated WASM module. */
-  public createEngine(): WasmEngineInstance {
-    return new NativeWasmEngineInstance(this.module);
-  }
-
-  /** Releases module-level resources. The generated module needs no extra shutdown. */
-  public dispose(): void {
-    // The generated Emscripten module does not expose a separate shutdown hook.
-  }
-}
-
-/** Loads the generated Emscripten module and wraps it in the typed TS facade. */
 export async function loadEngineModule(): Promise<WasmEngineModule> {
   const module = await createStipplingEngineModule();
-  return new NativeWasmEngineModule(module);
+  return {
+    createEngine: () => new NativeWasmEngineInstance(module),
+  };
 }

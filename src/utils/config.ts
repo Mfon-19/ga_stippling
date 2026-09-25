@@ -8,9 +8,16 @@ export const CONFIG = {
     DEFAULT_BLUR: 0,
     DEFAULT_THRESHOLD: 130,
     MAX_DOT_COUNT: 200000,
-    RECOMMENDED_DOTS_PER_IMPORTANCE_POINT: 0.035,
-    RECOMMENDED_DOTS_PER_BLACK_PIXEL: 0.02,
-    MAX_RECOMMENDED_DOT_PERCENTAGE: 0.04,
+    // Uploads are downscaled to this longest edge: every candidate keeps a
+    // full-size raster, so memory grows with population x pixels.
+    MAX_DIMENSION: 1024,
+  },
+  RUN: {
+    PREVIEW_INTERVAL_MS: 100,
+    // Slider changes re-prepare the target only once input settles.
+    PROCESSING_DEBOUNCE_MS: 150,
+    EXPORT_SCALE: 4,
+    TIMELAPSE_FRAME_DURATION_MS: 120,
   },
 };
 

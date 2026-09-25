@@ -8,9 +8,8 @@
 namespace stippling {
 
 /**
- * Binary raster plus overlap counts used to validate incremental updates.
- * Coverage counts allow a dot to be removed without incorrectly erasing pixels
- * that are still covered by other dots.
+ * Black/white raster with per-pixel coverage counts, so erasing one dot leaves
+ * pixels that other dots still cover black. Tracks squared error incrementally.
  */
 class RasterGrid {
  public:
@@ -19,7 +18,6 @@ class RasterGrid {
   void clear();
   void draw_dot(const Dot& dot);
   void erase_dot(const Dot& dot);
-  void apply_dot_delta(const Dot& previous_dot, const Dot& next_dot);
   [[nodiscard]] std::uint64_t apply_dot_delta_and_update_error(
       const Dot& previous_dot,
       const Dot& next_dot,
@@ -42,12 +40,6 @@ class RasterGrid {
                      int delta,
                      const std::vector<std::uint8_t>* target,
                      std::uint64_t* squared_error);
-  void draw_circle(int center_x,
-                   int center_y,
-                   int radius,
-                   int delta,
-                   const std::vector<std::uint8_t>* target,
-                   std::uint64_t* squared_error);
   void update_horizontal_span(int y,
                               int start_x,
                               int end_x,

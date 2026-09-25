@@ -1,28 +1,6 @@
-/**
- * Shared contract between the browser UI, the worker, and the active C++/WASM
- * engine runtime. Keeping these message shapes in one place makes the
- * browser-to-engine boundary explicit and stable.
- */
+// Messages between the UI thread and the engine worker.
 
-export type EngineStatus =
-  | "booting"
-  | "idle"
-  | "loaded"
-  | "running"
-  | "paused"
-  | "error";
-
-export type EngineBackend = "wasm";
-
-export interface EngineCapabilities {
-  backend: EngineBackend;
-  incrementalFitness: boolean;
-  multiscale: boolean;
-  benchmarkMode: boolean;
-  exportSvg: boolean;
-  exportPng: boolean;
-  exportTimelapse: boolean;
-}
+export type EngineStatus = "booting" | "idle" | "loaded" | "running" | "error";
 
 export interface SerializedImageBuffer {
   width: number;
@@ -58,13 +36,6 @@ export interface EngineRunConfig {
   seed: number;
   generationsPerBatch: number;
   previewIntervalMs: number;
-  benchmarkMode?: boolean;
-}
-
-export interface EngineSnapshot {
-  generation: number;
-  dots?: SerializedDot[];
-  raster?: ArrayBuffer;
 }
 
 export type EngineExportFormat = "svg" | "png" | "timelapse-svg";
@@ -77,10 +48,8 @@ export interface EngineExportOptions {
 export interface EngineRunMetrics {
   seed: number;
   elapsedMs: number;
-  batchDurationMs: number;
   generationsPerSecond: number;
   bestFitness: number;
-  usedHeapBytes?: number;
 }
 
 interface BaseCommand {
@@ -103,25 +72,9 @@ export interface StartRunCommand extends BaseCommand {
   config: EngineRunConfig;
 }
 
-export interface PauseRunCommand extends BaseCommand {
-  type: "pause-run";
-  runId: string;
-}
-
 export interface StopRunCommand extends BaseCommand {
   type: "stop-run";
   runId: string;
-}
-
-export interface RequestSnapshotCommand extends BaseCommand {
-  type: "request-snapshot";
-  runId: string;
-  includeDots?: boolean;
-  includeRaster?: boolean;
-}
-
-export interface RequestStatusCommand extends BaseCommand {
-  type: "request-status";
 }
 
 export interface ExportArtifactCommand extends BaseCommand {
@@ -135,17 +88,13 @@ export type EngineCommand =
   | InitializeEngineCommand
   | PrepareTargetCommand
   | StartRunCommand
-  | PauseRunCommand
   | StopRunCommand
-  | RequestSnapshotCommand
-  | RequestStatusCommand
   | ExportArtifactCommand;
 
 export interface EngineReadyEvent {
   type: "ready";
   requestId: string;
   status: EngineStatus;
-  capabilities: EngineCapabilities;
 }
 
 export interface EngineAckEvent {
@@ -162,28 +111,13 @@ export interface TargetPreparedEvent {
   stats: TargetStats;
 }
 
-export interface EngineStatusEvent {
-  type: "status";
-  requestId: string;
-  status: EngineStatus;
-  hasImage: boolean;
-  activeRunId: string | null;
-}
-
+/** Posted once per time slice; `dots` only when the preview interval has passed. */
 export interface EngineProgressEvent {
   type: "progress";
   runId: string;
   generation: number;
-  bestFitness: number;
-  status: EngineStatus;
   metrics: EngineRunMetrics;
-}
-
-export interface EngineSnapshotEvent {
-  type: "snapshot";
-  requestId: string;
-  runId: string;
-  snapshot: EngineSnapshot;
+  dots?: SerializedDot[];
 }
 
 export interface EngineErrorEvent {
@@ -207,8 +141,6 @@ export type EngineEvent =
   | EngineReadyEvent
   | EngineAckEvent
   | TargetPreparedEvent
-  | EngineStatusEvent
   | EngineProgressEvent
-  | EngineSnapshotEvent
   | EngineErrorEvent
   | EngineArtifactEvent;
