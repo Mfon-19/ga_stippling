@@ -1,23 +1,23 @@
 #include "stippling/engine/engine.hpp"
 
-#include <cassert>
+#include "check.hpp"
 #include <cstdint>
 #include <vector>
 
 int main() {
   stippling::Engine engine;
 
-  assert(engine.status() == stippling::EngineStatus::idle);
-  assert(!engine.has_image());
+  CHECK(engine.status() == stippling::EngineStatus::idle);
+  CHECK(!engine.has_image());
 
   stippling::EngineConfig config{};
   config.seed = 42;
   config.dot_count = 2048;
   engine.configure(config);
 
-  assert(engine.config().seed == 42);
-  assert(engine.config().dot_count == 2048);
-  assert(engine.status() == stippling::EngineStatus::configured);
+  CHECK(engine.config().seed == 42);
+  CHECK(engine.config().dot_count == 2048);
+  CHECK(engine.status() == stippling::EngineStatus::configured);
 
   const auto processed = engine.prepare_target(
       {
@@ -35,11 +35,11 @@ int main() {
           .max_dot_count = 200000,
       });
 
-  assert(processed.valid());
-  assert(processed.format == stippling::PixelFormat::rgba8);
-  assert(engine.target_stats().black_pixels == 3);
-  assert(engine.target_stats().total_pixels == 4);
-  assert(engine.target_stats().recommended_dot_count == 1);
+  CHECK(processed.valid());
+  CHECK(processed.format == stippling::PixelFormat::rgba8);
+  CHECK(engine.target_stats().black_pixels == 3);
+  CHECK(engine.target_stats().total_pixels == 4);
+  CHECK(engine.target_stats().recommended_dot_count == 1);
 
   stippling::ImageBuffer image{
       .format = stippling::PixelFormat::grayscale8,
@@ -49,9 +49,9 @@ int main() {
   };
   engine.load_image(std::move(image));
 
-  assert(engine.has_image());
-  assert(engine.image().pixels.size() == 4);
-  assert(engine.status() == stippling::EngineStatus::image_loaded);
+  CHECK(engine.has_image());
+  CHECK(engine.image().pixels.size() == 4);
+  CHECK(engine.status() == stippling::EngineStatus::image_loaded);
 
   return 0;
 }

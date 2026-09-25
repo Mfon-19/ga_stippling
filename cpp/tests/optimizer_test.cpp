@@ -1,6 +1,6 @@
 #include "stippling/engine/engine.hpp"
 
-#include <cassert>
+#include "check.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -64,30 +64,30 @@ int main() {
 
   const auto initial_left = left.optimizer_progress();
   const auto initial_right = right.optimizer_progress();
-  assert(initial_left.generation == 0);
-  assert(initial_right.generation == 0);
-  assert(initial_left.best_fitness == initial_right.best_fitness);
-  assert(initial_left.best_squared_error == initial_right.best_squared_error);
-  assert(left.capabilities().multiscale);
-  assert(right.capabilities().multiscale);
+  CHECK(initial_left.generation == 0);
+  CHECK(initial_right.generation == 0);
+  CHECK(initial_left.best_fitness == initial_right.best_fitness);
+  CHECK(initial_left.best_squared_error == initial_right.best_squared_error);
+  CHECK(left.capabilities().multiscale);
+  CHECK(right.capabilities().multiscale);
 
   for (std::uint32_t generation = 1; generation <= 6; ++generation) {
     const auto progressed_left = left.evolve_batch();
     const auto progressed_right = right.evolve_batch();
 
-    assert(progressed_left.generation == generation);
-    assert(progressed_right.generation == generation);
-    assert(progressed_left.best_fitness == progressed_right.best_fitness);
-    assert(progressed_left.best_squared_error == progressed_right.best_squared_error);
+    CHECK(progressed_left.generation == generation);
+    CHECK(progressed_right.generation == generation);
+    CHECK(progressed_left.best_fitness == progressed_right.best_fitness);
+    CHECK(progressed_left.best_squared_error == progressed_right.best_squared_error);
   }
 
-  assert(left.validate_optimizer().valid);
-  assert(right.validate_optimizer().valid);
-  assert(left.best_dots().size() == right.best_dots().size());
-  assert(!left.best_dots().empty());
-  assert(left.best_dots().front().x == right.best_dots().front().x);
-  assert(left.best_dots().front().y == right.best_dots().front().y);
-  assert(left.best_dots().front().radius == right.best_dots().front().radius);
+  CHECK(left.validate_optimizer().valid);
+  CHECK(right.validate_optimizer().valid);
+  CHECK(left.best_dots().size() == right.best_dots().size());
+  CHECK(!left.best_dots().empty());
+  CHECK(left.best_dots().front().x == right.best_dots().front().x);
+  CHECK(left.best_dots().front().y == right.best_dots().front().y);
+  CHECK(left.best_dots().front().radius == right.best_dots().front().radius);
 
   return 0;
 }

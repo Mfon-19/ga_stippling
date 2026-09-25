@@ -1,7 +1,7 @@
 #include "stippling/engine/dot.hpp"
 #include "stippling/engine/raster_grid.hpp"
 
-#include <cassert>
+#include "check.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -18,7 +18,7 @@ int main() {
 
     full.draw_dot(next);
 
-    assert(incremental.pixels() == full.pixels());
+    CHECK(incremental.pixels() == full.pixels());
   }
 
   {
@@ -33,7 +33,7 @@ int main() {
 
     full.draw_dot(right);
 
-    assert(overlapping.pixels() == full.pixels());
+    CHECK(overlapping.pixels() == full.pixels());
   }
 
   {
@@ -42,7 +42,7 @@ int main() {
     grid.draw_dot(dot);
 
     const std::vector<std::uint8_t> white_target(16 * 16, 255);
-    assert(grid.squared_error(white_target) > 0);
+    CHECK(grid.squared_error(white_target) > 0);
   }
 
   {
@@ -60,8 +60,8 @@ int main() {
     full.draw_dot(next);
     const auto full_error = full.squared_error(target);
 
-    assert(incremental.pixels() == full.pixels());
-    assert(incremental_error == full_error);
+    CHECK(incremental.pixels() == full.pixels());
+    CHECK(incremental_error == full_error);
   }
 
   return 0;

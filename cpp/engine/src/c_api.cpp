@@ -321,7 +321,7 @@ size_t stippling_engine_copy_best_dots(const StipplingEngine* engine,
 /** Returns the byte length of the current best SVG export. */
 size_t stippling_engine_best_svg_byte_length(const StipplingEngine* engine,
                                              int scale) {
-  if (engine == nullptr || !engine->engine.has_optimizer()) {
+  if (engine == nullptr || !engine->engine.has_optimizer() || scale <= 0) {
     return 0;
   }
 
@@ -333,7 +333,8 @@ size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
                                       char* output,
                                       size_t capacity,
                                       int scale) {
-  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer()) {
+  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer() ||
+      scale <= 0) {
     return 0;
   }
 
@@ -346,7 +347,7 @@ size_t stippling_engine_copy_best_svg(const StipplingEngine* engine,
 /** Returns the byte length of the current best PNG export. */
 size_t stippling_engine_best_png_byte_length(const StipplingEngine* engine,
                                              int scale) {
-  if (engine == nullptr || !engine->engine.has_optimizer()) {
+  if (engine == nullptr || !engine->engine.has_optimizer() || scale <= 0) {
     return 0;
   }
 
@@ -358,7 +359,8 @@ size_t stippling_engine_copy_best_png(const StipplingEngine* engine,
                                       uint8_t* output,
                                       size_t capacity,
                                       int scale) {
-  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer()) {
+  if (engine == nullptr || output == nullptr || !engine->engine.has_optimizer() ||
+      scale <= 0) {
     return 0;
   }
 
@@ -401,7 +403,7 @@ uint32_t stippling_engine_target_recommended_dot_count(const StipplingEngine* en
 /** Returns the latest optimizer progress as a C ABI struct. */
 StipplingOptimizerProgress stippling_engine_optimizer_progress(
     const StipplingEngine* engine) {
-  if (engine == nullptr) {
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
     return {};
   }
 
@@ -410,19 +412,30 @@ StipplingOptimizerProgress stippling_engine_optimizer_progress(
 
 /** Returns the latest whole-run optimizer generation count. */
 uint32_t stippling_engine_optimizer_generation(const StipplingEngine* engine) {
-  return engine == nullptr ? 0u : engine->engine.optimizer_progress().generation;
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0u;
+  }
+
+  return engine->engine.optimizer_progress().generation;
 }
 
 /** Returns the latest best fitness value. */
 double stippling_engine_optimizer_best_fitness(const StipplingEngine* engine) {
-  return engine == nullptr ? 0.0 : engine->engine.optimizer_progress().best_fitness;
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0.0;
+  }
+
+  return engine->engine.optimizer_progress().best_fitness;
 }
 
 /** Returns the latest best squared-error value. */
 uint64_t stippling_engine_optimizer_best_squared_error(
     const StipplingEngine* engine) {
-  return engine == nullptr ? 0u
-                           : engine->engine.optimizer_progress().best_squared_error;
+  if (engine == nullptr || !engine->engine.has_optimizer()) {
+    return 0u;
+  }
+
+  return engine->engine.optimizer_progress().best_squared_error;
 }
 
 /** Validates the optimizer's incremental raster bookkeeping. */

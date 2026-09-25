@@ -434,7 +434,7 @@ void Optimizer::update_search_state() {
  * run has stalled for long enough.
  */
 void Optimizer::apply_restart_strategy_if_needed() {
-  const auto restart_threshold = std::max<std::uint32_t>(8u, width_ < 96 ? 6u : 10u);
+  const auto restart_threshold = width_ < 96 ? 8u : 10u;
   if (stagnation_generations_ < restart_threshold || population_.size() < 4) {
     return;
   }
