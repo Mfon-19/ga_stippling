@@ -17,3 +17,7 @@ jobs.jpeg
 landscape.avif
 .vercel
 .env*.local
+
+.vscode
+/build
+dist/

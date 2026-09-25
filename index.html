@@ -569,6 +569,21 @@
 
     </div>
 
+    <script>
+      // Hosts that can't send COOP/COEP headers (GitHub Pages) get them from a
+      // service worker. The first visit reloads once so the worker controls
+      // the page; the session flag stops a loop where isolation is unsupported.
+      if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./coi-serviceworker.js').then(() => {
+          navigator.serviceWorker.ready.then(() => {
+            if (!sessionStorage.getItem('coiReloaded')) {
+              sessionStorage.setItem('coiReloaded', '1');
+              location.reload();
+            }
+          });
+        }, (error) => console.warn('Cross-origin isolation unavailable:', error));
+      }
+    </script>
     <script src="./src/main.ts" type="module"></script>
   </body>
 </html>
